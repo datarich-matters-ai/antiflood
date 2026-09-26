@@ -281,13 +281,18 @@
 
   // ---------- map ----------
   let mapFilter = "all";
-  let showDams = true;
+  let showDams = false;
+  let satellite = false;
+  let baseLayer = null;
+  const LABEL_ZOOM = 9; // % labels only once zoomed in; dots below that
+  let labelled = null;
 
   function initMap() {
     if (map || !window.L) return;
     map = L.map("map", { preferCanvas: true }).setView([13.5, 100.8], 6);
-    addBaseLayer(map, () => { $("map-notice").hidden = false; $("map-notice").textContent = "โหลดภาพแผนที่พื้นหลังไม่ได้ (สัญญาณอ่อน?) จุดสถานียังแสดงตามปกติ"; });
+    setBase();
     markerLayer = L.layerGroup().addTo(map);
+    map.on("zoomend", () => { if ((map.getZoom() >= LABEL_ZOOM) !== labelled) drawMarkers(); });
     drawMarkers();
     if (myPos) showMe();
   }
@@ -311,6 +316,7 @@
   function drawMarkers() {
     if (!map) return;
     markerLayer.clearLayers();
+    labelled = map.getZoom() >= LABEL_ZOOM;
     let shown = stations;
     if (mapFilter === "high") shown = stations.filter((s) => statusOf(s).rank >= 4);
     if (mapFilter === "rising") shown = stations.filter(isRising);
@@ -319,7 +325,7 @@
     [...shown].sort((a, b) => statusOf(a).rank - statusOf(b).rank).forEach((s) => {
       const st = statusOf(s);
       const critical = st.rank >= 4 || isRising(s);
-      if (critical) {
+      if (critical && labelled) {
         // Labelled pin: severity colour, % of bank and a rising arrow.
         const label = `${s.pct != null ? s.pct.toFixed(0) + "%" : "?"}${isRising(s) ? " ▲" : ""}`;
         L.marker([s.lat, s.lng], {
@@ -328,13 +334,13 @@
         }).bindPopup(stationPopup(s)).addTo(markerLayer);
       } else {
         L.circleMarker([s.lat, s.lng], {
-          radius: 6, weight: 1.5, color: "#fff", fillColor: cssColor(st.cls), fillOpacity: 0.95,
+          radius: critical ? 8 : 5, weight: critical ? 2 : 1, color: "#fff", fillColor: cssColor(st.cls), fillOpacity: 0.95,
         }).bindPopup(stationPopup(s)).addTo(markerLayer);
       }
     });
 
     if (showDams) {
-      dams.forEach((d) => {
+      dams.filter((d) => d.pct != null).forEach((d) => {
         const st = damStatusOf(d);
         L.marker([d.lat, d.lng], {
           icon: L.divIcon({ className: "dam-icon", html: `<i style="background:${cssColor(st.cls)}"></i>`, iconSize: [16, 16] }),
@@ -365,32 +371,50 @@
     e.currentTarget.classList.toggle("active", showDams);
     drawMarkers();
   });
+  document.querySelector(".chips [data-toggle=sat]").addEventListener("click", (e) => {
+    satellite = !satellite;
+    e.currentTarget.classList.toggle("active", satellite);
+    setBase();
+  });
   $("map-locate").addEventListener("click", async () => {
     try { await locate(); render(); showMe(); } catch (err) { alert(err.message); }
   });
 
-  // Basemap providers, tried in order: if one fails before any tile loads, the
-  // next one takes over.
-  const BASEMAPS = [
-    ["https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-      { subdomains: "abcd", attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>' }],
-    ["https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }],
+  // Street basemaps, tried in order: if one fails before any tile loads, the
+  // next one takes over. (CARTO was dropped: it now serves "API KEY REQUIRED"
+  // placeholder images with HTTP 200, which no error handler can catch.)
+  const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  const STREET = [
+    ["https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: OSM_ATTR }],
     ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-      { attribution: "Tiles &copy; Esri" }],
+      { maxZoom: 19, attribution: "Tiles &copy; Esri" }],
+  ];
+  const SATELLITE = [
+    ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      { maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" }],
   ];
 
-  function addBaseLayer(m, onAllFailed, i = 0) {
-    if (i >= BASEMAPS.length) { if (onAllFailed) onAllFailed(); return; }
-    const [url, opts] = BASEMAPS[i];
-    const layer = L.tileLayer(url, { maxZoom: 19, ...opts, attribution: opts.attribution + " · ข้อมูลน้ำ ThaiWater" }).addTo(m);
+  function setBase() {
+    if (baseLayer) map.removeLayer(baseLayer);
+    $("map-notice").hidden = true;
+    addBaseLayer(map, satellite ? SATELLITE : STREET, (layer) => { baseLayer = layer; }, () => {
+      $("map-notice").hidden = false;
+      $("map-notice").textContent = "โหลดภาพแผนที่พื้นหลังไม่ได้ (สัญญาณอ่อน?) จุดสถานียังแสดงตามปกติ";
+    });
+  }
+
+  function addBaseLayer(m, list = STREET, onLayer, onAllFailed, i = 0) {
+    if (i >= list.length) { if (onAllFailed) onAllFailed(); return; }
+    const [url, opts] = list[i];
+    const layer = L.tileLayer(url, { ...opts, attribution: opts.attribution + " · ข้อมูลน้ำ ThaiWater" }).addTo(m);
+    if (onLayer) onLayer(layer);
     let loaded = false, errors = 0, done = false;
     layer.on("tileload", () => { loaded = true; });
     layer.on("tileerror", () => {
       if (loaded || done || ++errors < 3) return;
       done = true;
       m.removeLayer(layer);
-      addBaseLayer(m, onAllFailed, i + 1);
+      addBaseLayer(m, list, onLayer, onAllFailed, i + 1);
     });
   }
 
