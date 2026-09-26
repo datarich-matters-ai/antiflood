@@ -1,0 +1,25 @@
+# Temporary: checks which flood-road data sources respond (to be removed).
+name: probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Traffy docs page
+        run: curl -sSL -m 30 https://apitest2.traffy.in.th/ | sed 's/<[^>]*>/ /g' | tr -s ' \n' | head -c 4000; echo
+      - name: Traffy search (flood)
+        run: |
+          for q in "limit=3&type=น้ำท่วม" "limit=3&problem_type_abdul=น้ำท่วม" "limit=3&type=%E0%B8%99%E0%B9%89%E0%B8%B3%E0%B8%97%E0%B9%88%E0%B8%A7%E0%B8%A1&state_type=start"; do
+            echo "=== $q"; curl -sS -m 30 -G "https://publicapi.traffy.in.th/share/teamchadchart/search" --data-urlencode "x=1" -d "$q" | head -c 2500; echo; done
+      - name: Traffy nationwide
+        run: |
+          for u in "https://publicapi.traffy.in.th/share/fondue/search?limit=2" "https://publicapi.traffy.in.th/share/teamchadchart/search?limit=2&province=เชียงราย"; do
+            echo "=== $u"; curl -sS -m 30 "$u" | head -c 1500; echo; done
+      - name: DOH HDMS
+        run: |
+          curl -sSL -m 30 -o hdms.html -w "%{http_code} %{url_effective}\n" https://hdms.doh.go.th/ || true
+          sed 's/<[^>]*>/ /g' hdms.html | tr -s ' \n' | head -c 1500; echo
+          grep -oE '(https?:)?//[^"'"'"' ]*(api|json|geojson|service)[^"'"'"' ]*' hdms.html | sort -u | head -20
+          grep -oE 'src="[^"]+\.js"' hdms.html | head
+      - name: ThaiWater rain
+        run: curl -sS -m 30 https://api-v3.thaiwater.net/api/v1/thaiwater30/public/rain_24h | head -c 1200; echo
