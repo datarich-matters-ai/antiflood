@@ -28,6 +28,7 @@
         </select>
       </div>
       <div id="summary"></div>
+      <div id="rain"></div>
       <ul id="list" class="list"></ul>
       <div id="dams"></div>
       <div id="prov-hotlines"></div>
@@ -36,6 +37,11 @@
     <!-- แผนที่ -->
     <section id="tab-map" class="tab">
       <div class="map-bar">
+        <div class="modes" role="tablist" aria-label="โหมดแผนที่">
+          <button class="mode active" data-mode="water">💧 ระดับน้ำ</button>
+          <button class="mode" data-mode="radar">🌧️ เรดาร์ฝน</button>
+          <button class="mode" data-mode="clouds">☁️ เมฆ/พายุ</button>
+        </div>
         <div id="map-counts" class="small"></div>
         <div class="chips" role="group" aria-label="ตัวกรองแผนที่">
           <button class="chip active" data-filter="all">ทุกสถานี</button>
@@ -49,6 +55,14 @@
         <div id="map"></div>
         <button id="map-locate" class="map-fab" aria-label="ไปที่ตำแหน่งของฉัน">📍</button>
         <div id="map-notice" class="map-notice" hidden></div>
+        <div id="wx-panel" class="wx-panel" hidden>
+          <div id="wx-time" class="row small"></div>
+          <div id="wx-player" class="player" hidden>
+            <button id="wx-play" class="btn" aria-label="เล่น/หยุด">⏸</button>
+            <input id="wx-slider" type="range" min="0" max="0" value="0" aria-label="เวลาเรดาร์">
+          </div>
+          <div id="wx-forecast" class="small"></div>
+        </div>
       </div>
       <div class="legend small">
         <span><i class="dot s5"></i>ล้นตลิ่ง (&gt;100%)</span>

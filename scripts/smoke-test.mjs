@@ -18,7 +18,7 @@ for (const [label, engine, device] of targets) {
   const hashes = new Set(); // identical bytes on every tile = a placeholder, not a map
   page.on("response", async (r) => {
     const u = new URL(r.url());
-    if (/cartocdn|openstreetmap|arcgisonline/.test(u.hostname) && !u.hostname.startsWith("nominatim")) {
+    if (/cartocdn|openstreetmap|arcgisonline|rainviewer|earthdata/.test(u.hostname) && !u.hostname.startsWith("nominatim")) {
       const k = `${u.hostname.split(".").slice(-2).join(".")} ${r.status()}`;
       tiles[k] = (tiles[k] || 0) + 1;
       try { hashes.add(createHash("sha1").update(await r.body()).digest("hex")); } catch { /* aborted */ }
@@ -39,6 +39,12 @@ for (const [label, engine, device] of targets) {
   console.log("tile responses:", JSON.stringify(tiles), "distinct tile images:", hashes.size);
   await page.click("[data-toggle=sat]");
   await page.waitForTimeout(4000);
+  for (const mode of ["radar", "clouds"]) {
+    await page.click(`[data-mode=${mode}]`);
+    await page.waitForTimeout(5000);
+    console.log(`${mode}:`, (await page.textContent("#wx-panel")).replace(/\s+/g, " ").trim());
+  }
+  console.log("tile responses by host:", JSON.stringify(tiles), "distinct:", hashes.size);
   console.log("satellite tiles loaded:", await page.locator(".leaflet-tile-loaded").count(), JSON.stringify(tiles), "distinct:", hashes.size);
   await browser.close();
 }

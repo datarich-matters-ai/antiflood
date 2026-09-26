@@ -40,6 +40,7 @@
 
   let stations = [];
   let dams = [];
+  let wx = {}; // data/weather.json: radar frames, cloud image, storms
   let myPos = null; // {lat, lng}
   let map, markerLayer, meMarker;
 
@@ -90,6 +91,9 @@
 
   // ---------- data ----------
   async function load() {
+    const wxReq = fetch("data/weather.json", { cache: "no-cache" })
+      .then((res) => (res.ok ? res.json() : {}))
+      .catch(() => ({}));
     const damsReq = fetch(DAMS_URL, { cache: "no-cache" })
       .then((res) => (res.ok ? res.json() : null))
       .catch((err) => { console.warn("dams", err); return null; });
@@ -107,6 +111,7 @@
       console.error(err);
     }
     dams = (await damsReq)?.dams || [];
+    wx = await wxReq;
     fillProvinces();
     drawMarkers();
     const savedProv = store.get("prov");
@@ -159,6 +164,7 @@
 
     renderDams(prov);
     renderProvHotlines(prov);
+    renderRain(rows, prov);
   }
 
   function renderDams(prov) {
@@ -293,6 +299,11 @@
     setBase();
     markerLayer = L.layerGroup().addTo(map);
     map.on("zoomend", () => { if ((map.getZoom() >= LABEL_ZOOM) !== labelled) drawMarkers(); });
+    map.on("moveend", () => {
+      if (mapMode !== "radar" || myPos) return;
+      clearTimeout(fcTimer);
+      fcTimer = setTimeout(mapForecast, 800);
+    });
     drawMarkers();
     if (myPos) showMe();
   }
@@ -425,6 +436,211 @@
       .addTo(map).bindPopup("ตำแหน่งของคุณ");
     map.setView([myPos.lat, myPos.lng], 12);
   }
+
+  // ---------- rain forecast ----------
+  // Open-Meteo model forecast for a point: 15-minute steps for the next 2 h and
+  // hourly for 24 h. RainViewer no longer publishes radar nowcasts, so the
+  // "will it rain" answer comes from the model; the radar loop shows where the
+  // rain has been moving over the past 2 hours.
+  const forecastCache = new Map();
+
+  async function rainForecast(lat, lng) {
+    const key = `${lat.toFixed(2)},${lng.toFixed(2)}`;
+    const hit = forecastCache.get(key);
+    if (hit && Date.now() - hit.at < 10 * 60e3) return hit.data;
+    const url = "https://api.open-meteo.com/v1/forecast?timezone=Asia%2FBangkok" +
+      `&latitude=${lat.toFixed(3)}&longitude=${lng.toFixed(3)}` +
+      "&minutely_15=precipitation&forecast_minutely_15=8" +
+      "&hourly=precipitation,precipitation_probability&forecast_hours=24";
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const j = await res.json();
+    const data = {
+      m15: j.minutely_15?.precipitation || [],
+      hours: (j.hourly?.time || []).map((t, i) => ({
+        t, mm: j.hourly.precipitation?.[i] ?? 0, prob: j.hourly.precipitation_probability?.[i] ?? null,
+      })),
+    };
+    forecastCache.set(key, { at: Date.now(), data });
+    return data;
+  }
+
+  // Thai Meteorological Department bands for 24-hour rainfall.
+  function rain24Label(mm) {
+    if (mm > 90) return ["ฝนหนักมาก", "s5"];
+    if (mm > 35) return ["ฝนหนัก", "s5"];
+    if (mm > 10) return ["ฝนปานกลาง", "s4"];
+    if (mm >= 0.1) return ["ฝนเล็กน้อย", "s3"];
+    return ["ไม่มีฝน", "s3"];
+  }
+
+  function rainVerdict(f) {
+    const WET = 0.1;
+    const now = f.m15[0] ?? 0;
+    const first = f.m15.findIndex((x) => x >= WET);
+    const h3 = f.hours.slice(0, 3);
+    const mm3 = h3.reduce((a, h) => a + h.mm, 0);
+    const prob6 = Math.max(0, ...f.hours.slice(0, 6).map((h) => h.prob ?? 0));
+    if (now >= WET) {
+      const dryAt = f.hours.findIndex((h, i) => i > 0 && h.mm < WET);
+      return ["🌧️ ฝนกำลังตกอยู่" + (dryAt > 0 ? ` คาดว่าตกต่ออีกราว ${dryAt} ชม.` : " และคาดว่าตกต่อเนื่อง"), "wet"];
+    }
+    if (first > 0) return [`🌧️ ฝนน่าจะเริ่มตกในอีกราว ${first * 15} นาที`, "wet"];
+    if (mm3 >= 0.5 || prob6 >= 60) return [`🌦️ อาจมีฝนใน 3–6 ชม. ข้างหน้า (โอกาส ${prob6}%)`, "maybe"];
+    return [`🌤️ ไม่น่ามีฝนใน 3 ชม. ข้างหน้า${prob6 ? ` (โอกาสฝน 6 ชม. ${prob6}%)` : ""}`, "dry"];
+  }
+
+  function rainHtml(f, where, nearHigh) {
+    const [verdict, cls] = rainVerdict(f);
+    const mm24 = f.hours.reduce((a, h) => a + h.mm, 0);
+    const [label24, cls24] = rain24Label(mm24);
+    const max = Math.max(1, ...f.hours.map((h) => h.mm));
+    const bars = f.hours.map((h, i) =>
+      `<i title="${h.t.slice(11, 16)} น. ${h.mm} มม." style="height:${Math.max(2, (h.mm / max) * 100)}%"${h.mm >= 0.1 ? ' class="wet"' : ""}></i>` +
+      (i % 6 === 0 ? `<b style="left:${(i / f.hours.length) * 100}%">${h.t.slice(11, 13)}น.</b>` : "")).join("");
+    const warn = nearHigh && mm24 > 35
+      ? `<p class="rain-warn">⚠️ คาดว่าฝนหนักซ้ำในพื้นที่ที่น้ำสูงอยู่แล้ว ระดับน้ำอาจเพิ่มขึ้นอีก เตรียมพร้อมอพยพ</p>` : "";
+    return `<div class="rain-now ${cls}">${verdict}</div>` +
+      `<div class="small">24 ชม. ข้างหน้า${where}: <b class="c${cls24.slice(1)}">${label24}</b> รวม ~${mm24.toFixed(1)} มม.</div>` +
+      `<div class="rain-bars" aria-hidden="true">${bars}</div>${warn}` +
+      `<div class="small muted">พยากรณ์จากแบบจำลอง Open-Meteo อาจคลาดเคลื่อน ใช้ประกอบประกาศกรมอุตุนิยมวิทยา</div>`;
+  }
+
+  // Near-me tab: forecast at the user's position, or the province's centre.
+  async function renderRain(rows, prov) {
+    const el = $("rain");
+    let pt = myPos;
+    if (!pt && prov && rows.length) {
+      pt = { lat: rows.reduce((a, s) => a + s.lat, 0) / rows.length, lng: rows.reduce((a, s) => a + s.lng, 0) / rows.length };
+    }
+    if (!pt) { el.innerHTML = ""; return; }
+    const nearHigh = rows.some((s) => statusOf(s).rank >= 4 && (s.dist == null || s.dist <= NEAR_KM));
+    el.innerHTML = `<div class="card"><h2>🌧️ ฝนจะตกอีกไหม</h2><div class="small muted">กำลังโหลดพยากรณ์…</div></div>`;
+    try {
+      const f = await rainForecast(pt.lat, pt.lng);
+      el.innerHTML = `<div class="card"><h2>🌧️ ฝนจะตกอีกไหม</h2>${rainHtml(f, myPos ? " ตรงตำแหน่งคุณ" : ` (จ.${esc(prov)})`, nearHigh)}` +
+        `<p class="small"><a href="#" data-mode-go="radar">ดูเรดาร์ฝนบนแผนที่ →</a></p></div>`;
+    } catch {
+      el.innerHTML = `<div class="card small muted">โหลดพยากรณ์ฝนไม่ได้ (ไม่มีสัญญาณ?)</div>`;
+    }
+  }
+
+  // ---------- weather map modes ----------
+  let mapMode = "water";
+  let wxLayers = [];     // radar frame layers, oldest first
+  let cloudLayer = null;
+  let stormLayer = null;
+  let frameIdx = 0, playTimer = null, fcTimer = null;
+
+  const fmtUnix = (t) => new Date(t * 1000).toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" });
+
+  function clearWx() {
+    clearInterval(playTimer); playTimer = null;
+    wxLayers.forEach((l) => map.removeLayer(l)); wxLayers = [];
+    if (cloudLayer) { map.removeLayer(cloudLayer); cloudLayer = null; }
+    if (stormLayer) { map.removeLayer(stormLayer); stormLayer = null; }
+  }
+
+  function showFrame(i) {
+    frameIdx = i;
+    wxLayers.forEach((l, j) => l.setOpacity(j === i ? 0.75 : 0));
+    const f = wx.radar.frames[i];
+    const latest = i === wx.radar.frames.length - 1;
+    $("wx-time").innerHTML = `<span>🌧️ เรดาร์ฝน เวลา <b>${fmtUnix(f.t)} น.</b>${latest ? " (ล่าสุด)" : ""}</span>` +
+      `<span class="muted">ฟ้าอ่อน = ฝนเบา → เหลือง/แดง = ฝนหนัก</span>`;
+    $("wx-slider").value = i;
+  }
+
+  function play(on) {
+    clearInterval(playTimer); playTimer = null;
+    $("wx-play").textContent = on ? "⏸" : "▶️";
+    if (on) playTimer = setInterval(() => {
+      // Hold on the latest frame a little longer before looping.
+      const n = wx.radar.frames.length;
+      showFrame(frameIdx >= n - 1 ? 0 : frameIdx + 1);
+    }, 700);
+  }
+
+  function drawStorms() {
+    if (!wx.storms?.length) return;
+    stormLayer = L.layerGroup(wx.storms.map((st) => L.marker([st.lat, st.lng], {
+      icon: L.divIcon({ className: "storm-icon", html: `<span class="${esc(st.alert || "")}">🌀 ${esc(st.name)}</span>`, iconSize: null }),
+      zIndexOffset: 2000,
+    }).bindPopup(`<div class="pop"><b>🌀 ${esc(st.name)}</b><br>ระดับเตือน GDACS: ${esc(st.alert || "-")}<br>` +
+      `<span class="muted">ข้อมูลถึง ${esc(st.to || "-")}</span>` +
+      (st.url ? `<br><a href="${esc(st.url)}" target="_blank" rel="noopener">รายละเอียด</a>` : "") + `</div>`))).addTo(map);
+  }
+
+  function setMapMode(mode) {
+    initMap();
+    mapMode = mode;
+    document.querySelectorAll(".modes .mode").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+    clearWx();
+    const panel = $("wx-panel");
+    panel.hidden = mode === "water";
+    $("wx-player").hidden = true;
+    $("wx-forecast").innerHTML = "";
+
+    if (mode === "radar") {
+      if (!wx.radar?.frames?.length) {
+        $("wx-time").textContent = "ยังไม่มีข้อมูลเรดาร์ฝน ลองใหม่ภายหลัง";
+      } else {
+        wxLayers = wx.radar.frames.map((f) => L.tileLayer(`${wx.radar.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`, {
+          opacity: 0, maxNativeZoom: 7, maxZoom: 19, zIndex: 300, attribution: 'เรดาร์ฝน &copy; <a href="https://www.rainviewer.com/">RainViewer</a>',
+        }).addTo(map));
+        $("wx-slider").max = wx.radar.frames.length - 1;
+        $("wx-player").hidden = false;
+        showFrame(wx.radar.frames.length - 1);
+        play(true);
+        if (map.getZoom() > 8) map.setZoom(8); // radar detail stops at zoom 7
+      }
+      drawStorms();
+      mapForecast();
+    } else if (mode === "clouds") {
+      if (wx.clouds) {
+        cloudLayer = L.tileLayer(wx.clouds.url, {
+          opacity: 0.7, maxNativeZoom: wx.clouds.maxZoom, maxZoom: 19, zIndex: 300,
+          attribution: 'ภาพดาวเทียม Himawari &copy; NASA GIBS',
+        }).addTo(map);
+        const t = new Date(wx.clouds.time);
+        $("wx-time").innerHTML = `<span>☁️ ภาพดาวเทียมอินฟราเรด เวลา <b>${isNaN(t) ? esc(wx.clouds.time) : t.toLocaleString("th-TH", { timeZone: "Asia/Bangkok", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + " น."}</b></span>` +
+          `<span class="muted">สีขาวสว่าง = เมฆหนา ยอดสูง (กลุ่มพายุฝนฟ้าคะนอง)</span>`;
+        if (map.getZoom() > 7) map.setZoom(6);
+      } else {
+        $("wx-time").textContent = "ยังไม่มีภาพดาวเทียม ลองใหม่ภายหลัง";
+      }
+      drawStorms();
+      $("wx-forecast").innerHTML = wx.storms && !wx.storms.length
+        ? "ไม่มีพายุหมุนเขตร้อนใกล้ประเทศไทยในขณะนี้ (GDACS)"
+        : wx.storms?.length ? `🌀 มีพายุ ${wx.storms.length} ลูกใกล้ภูมิภาค แตะที่ป้ายเพื่อดูรายละเอียด` : "";
+    }
+  }
+
+  // Forecast for the user's position, or the map centre while panning.
+  async function mapForecast() {
+    if (mapMode !== "radar") return;
+    const c = myPos || map.getCenter();
+    const el = $("wx-forecast");
+    try {
+      const f = await rainForecast(c.lat, c.lng);
+      if (mapMode !== "radar") return;
+      const [verdict] = rainVerdict(f);
+      const mm24 = f.hours.reduce((a, h) => a + h.mm, 0);
+      el.innerHTML = `<b>${myPos ? "ตรงตำแหน่งคุณ" : "กลางแผนที่"}:</b> ${verdict} · 24 ชม. ~${mm24.toFixed(1)} มม. (${rain24Label(mm24)[0]})`;
+    } catch { el.textContent = "โหลดพยากรณ์ฝนไม่ได้"; }
+  }
+
+  document.querySelectorAll(".modes .mode").forEach((b) => b.addEventListener("click", () => setMapMode(b.dataset.mode)));
+  $("wx-play").addEventListener("click", () => play(!playTimer));
+  $("wx-slider").addEventListener("input", (e) => { play(false); showFrame(Number(e.target.value)); });
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest("[data-mode-go]");
+    if (!a) return;
+    e.preventDefault();
+    showTab("map");
+    setMapMode(a.dataset.modeGo);
+    if (myPos) map.setView([myPos.lat, myPos.lng], 8);
+  });
 
   // ---------- tabs ----------
   function showTab(name) {

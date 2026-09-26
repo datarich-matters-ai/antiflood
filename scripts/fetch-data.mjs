@@ -151,6 +151,63 @@ async function dams() {
   return out;
 }
 
+// ---------- weather overlays ----------
+// Rain radar frames (RainViewer), the latest Himawari infrared cloud image
+// (NASA GIBS) and tropical cyclones near Thailand (GDACS). Each part is
+// optional: a failure leaves that layer out rather than failing the file.
+const IR_LAYER = "Himawari_AHI_Band13_Clean_Infrared";
+const TC_BOX = { w: 80, e: 130, s: -5, n: 35 }; // SE Asia, Bay of Bengal, S China Sea
+
+async function weather() {
+  const out = {};
+
+  try {
+    const rv = await getJson("https://api.rainviewer.com/public/weather-maps.json", 2);
+    const frames = (rv?.radar?.past || []).map((f) => ({ t: f.time, path: f.path }));
+    if (rv?.host && frames.length) out.radar = { host: rv.host, frames };
+  } catch (err) { console.warn(`radar: ${err.message}`); }
+
+  try {
+    const res = await fetch("https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/wmts.cgi?SERVICE=WMTS&REQUEST=GetCapabilities",
+      { signal: AbortSignal.timeout(60000) });
+    const caps = await res.text();
+    const at = caps.indexOf(`<ows:Identifier>${IR_LAYER}</ows:Identifier>`);
+    if (at < 0) throw new Error(`${IR_LAYER} not in GIBS capabilities`);
+    const block = caps.slice(caps.lastIndexOf("<Layer>", at), caps.indexOf("</Layer>", at));
+    const time = block.match(/<Default>([^<]+)<\/Default>/)?.[1];
+    const tms = block.match(/<TileMatrixSet>([^<]+)<\/TileMatrixSet>/)?.[1];
+    const level = Number(tms?.match(/Level(\d+)/)?.[1]);
+    if (!time || !tms) throw new Error("no default time / tile matrix set");
+    out.clouds = {
+      url: `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${IR_LAYER}/default/${time}/${tms}/{z}/{y}/{x}.png`,
+      time,
+      maxZoom: Number.isFinite(level) ? level : 6,
+    };
+  } catch (err) { console.warn(`clouds: ${err.message}`); }
+
+  try {
+    const tc = await getJson("https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=TC", 2);
+    const recent = Date.now() - 3 * 864e5;
+    out.storms = (tc?.features || [])
+      .filter((f) => {
+        const [lng, lat] = f.geometry?.coordinates || [];
+        const p = f.properties || {};
+        return lng >= TC_BOX.w && lng <= TC_BOX.e && lat >= TC_BOX.s && lat <= TC_BOX.n &&
+          Date.parse(p.todate) >= recent;
+      })
+      .map((f) => ({
+        name: f.properties.eventname || f.properties.name,
+        lat: f.geometry.coordinates[1],
+        lng: f.geometry.coordinates[0],
+        alert: f.properties.alertlevel, // Green / Orange / Red
+        to: f.properties.todate,
+        url: f.properties.url?.report || "",
+      }));
+  } catch (err) { console.warn(`storms: ${err.message}`); }
+
+  return out;
+}
+
 // ---------- main ----------
 await mkdir(outDir, { recursive: true });
 const updated = new Date().toISOString();
@@ -182,6 +239,14 @@ try {
   console.error(`::warning::dams: ${err.message}`);
   const prev = await getPrev("dams.json");
   if (prev) await write("dams.json", prev);
+}
+
+try {
+  const w = await weather();
+  await write("weather.json", { updated, ...w });
+  console.log(`weather: radar ${w.radar?.frames.length ?? 0} frames, clouds ${w.clouds?.time ?? "none"}, storms ${w.storms?.length ?? "n/a"}`);
+} catch (err) {
+  console.error(`::warning::weather: ${err.message}`);
 }
 
 // Fail the deploy only when there is no water-level data at all to serve.

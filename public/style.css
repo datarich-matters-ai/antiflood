@@ -149,3 +149,29 @@ label { display: block; margin: 8px 0; font-size: .95rem; }
 .status.ok { background: #e8f5e9; color: #1b5e20; border: 1px solid #a5d6a7; }
 .status.wait { background: #fff8e1; color: #5d4300; border: 1px solid #ffe082; }
 .status.err { background: #ffebee; color: #b71c1c; border: 1px solid #ef9a9a; }
+
+/* weather modes */
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: var(--bg); padding: 3px; border-radius: 10px; margin-bottom: 6px; }
+.mode { font: inherit; font-size: .88rem; padding: 7px 4px; border: 0; border-radius: 8px; background: none; color: var(--text); cursor: pointer; }
+.mode.active { background: var(--card); color: var(--primary); font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.wx-panel { position: absolute; left: 8px; right: 68px; bottom: 34px; max-height: 45%; overflow-y: auto; z-index: 600; background: rgba(255,255,255,.96); color: #1a1f29; border-radius: 12px; padding: 8px 10px; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
+.wx-panel .row { display: flex; flex-direction: column; gap: 2px; }
+.wx-panel .muted { color: #5d6675; }
+.player { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.player .btn { min-height: 36px; padding: 4px 10px; }
+.player input { flex: 1; padding: 0; border: 0; }
+.storm-icon { background: none; border: 0; }
+.storm-icon span { display: inline-block; transform: translate(-50%, -50%); white-space: nowrap; font-weight: 700; font-size: 13px; padding: 4px 8px; border-radius: 12px; background: #6a1b9a; color: #fff; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+.storm-icon .Orange { background: #ef6c00; } .storm-icon .Red { background: #c62828; }
+
+/* rain forecast card */
+.rain-now { font-weight: 700; font-size: 1.05rem; padding: 8px 10px; border-radius: 10px; margin-bottom: 6px; }
+.rain-now.wet { background: #e3f2fd; color: #0d47a1; }
+.rain-now.maybe { background: #fff8e1; color: #5d4300; }
+.rain-now.dry { background: #e8f5e9; color: #1b5e20; }
+.rain-bars { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 56px; margin: 8px 0 18px; border-bottom: 1px solid var(--border); }
+.rain-bars i { flex: 1; background: var(--border); border-radius: 2px 2px 0 0; min-height: 2px; }
+.rain-bars i.wet { background: #1e88e5; }
+.rain-bars b { position: absolute; bottom: -17px; font-size: .7rem; font-weight: 400; color: var(--muted); }
+.rain-warn { margin: 6px 0; padding: 8px 10px; border-radius: 8px; background: #ffebee; color: #b71c1c; font-weight: 600; }
+.c3 { color: var(--s3); }
