@@ -5,18 +5,11 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Traffy api page scripts
+      - name: Traffy map.js endpoints
         run: |
-          curl -sSL -m 30 https://apitest2.traffy.in.th/ -o page.html
-          grep -oE '(src|href)="[^"]+\.js[^"]*"' page.html | head
-          for js in $(grep -oE 'src="[^"]+\.js[^"]*"' page.html | sed 's/src="//;s/"$//'); do
-            case "$js" in http*) u="$js";; /*) u="https://apitest2.traffy.in.th$js";; *) u="https://apitest2.traffy.in.th/$js";; esac
-            curl -sSL -m 30 "$u" -o s.js || continue
-            echo "== $u"; grep -oE '.{0,120}(search\?|publicapi|/share/)[^"'"'"'`]{0,200}' s.js | head -15
-          done
-          grep -oE '.{0,100}(search\?|publicapi|/share/|problem_type|state_type)[^"<]{0,200}' page.html | head -20
-      - name: Traffy search variants
+          curl -sSL -m 30 https://apitest2.traffy.in.th/js/map.js -o map.js
+          grep -nE 'base_url_api|publicapi|url_[a-z_]+ *=|axios\.(get|post)|fetch\(' map.js | cut -c1-260 | head -40
+      - name: Try geojson endpoints
         run: |
-          T=$(python3 -c "import urllib.parse;print(urllib.parse.quote('น้ำท่วม'))")
-          for q in "limit=2" "output_format=json&limit=2" "limit=2&type=$T" "limit=2&problem_type=$T" "limit=2&offset=0&sort=DESC"; do
-            echo "=== $q"; curl -sS -m 90 -w "\n[%{http_code} %{time_total}s]\n" "https://publicapi.traffy.in.th/share/teamchadchart/search?$q" | head -c 1800; echo; done
+          for p in $(grep -oE 'base_url_api *\}?[`"+ ]*[^`"]*' map.js | grep -oE '/teamchadchart/[A-Za-z0-9_/?=&.-]+' | sort -u | head -8); do
+            echo "=== $p"; curl -sS -m 45 -w "\n[%{http_code} %{time_total}s %{size_download}B]\n" "https://publicapi.traffy.in.th/share$p" | head -c 700; echo; done
