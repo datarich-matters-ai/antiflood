@@ -4,7 +4,7 @@ name: update-and-deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/keen-fermi-b7enci]
   schedule:
     - cron: "*/20 * * * *"
   workflow_dispatch:

@@ -13,10 +13,11 @@
 แอปนี้ไม่ใช่ช่องทางแจ้งเตือนทางการ ให้ติดตามประกาศจาก ปภ. และอำเภอเป็นหลัก
 
 ## Deploy (GitHub Pages)
-1. Merge เข้า `main` (scheduled workflow ทำงานเฉพาะบน default branch)
-2. Settings → Pages → Source: **GitHub Actions**
-3. Actions → `update-and-deploy` → Run workflow
-4. แชร์ลิงก์ `https://<org>.github.io/antiflood/`
+1. Settings → Pages → Source: **GitHub Actions** (ทำครั้งเดียว)
+2. Actions → `update-and-deploy` → Run workflow
+3. แชร์ลิงก์ https://datarich-matters-ai.github.io/antiflood/ ผู้ใช้เปิดใน Chrome/Safari บนมือถือได้ทันที ไม่ต้องติดตั้ง
+
+การดึงข้อมูลตามรอบเวลาทำงานบน default branch ของ repo
 
 GitHub Pages สำหรับ private repo ต้องใช้แพ็กเกจที่เสียเงิน ถ้า repo เป็น private และไม่อยากเปิดเป็น public ให้ deploy โฟลเดอร์ `public/` ไป Netlify หรือ Cloudflare Pages แทน แล้วรัน `node scripts/fetch-waterlevel.mjs` ตามรอบเวลา
 
