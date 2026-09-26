@@ -2,7 +2,10 @@
   "use strict";
   const CFG = window.APP_CONFIG || {};
   const DATA_URL = "data/waterlevel.json";
+  const DAMS_URL = "data/dams.json";
   const NEAR_KM = 20; // stations within this radius drive the summary alert
+  const DAM_KM = 150; // dams shown in the near-me view
+  const RISE_CM = 10; // change over the trend window that counts as rising/falling
 
   // Same bands as ThaiWater's "% ความจุลำน้ำ" legend.
   const STATUS = [
@@ -13,6 +16,13 @@
     { cls: "s1", label: "น้ำน้อยวิกฤต", min: -Infinity },
   ];
   const NO_DATA = { cls: "s0", label: "ไม่มีข้อมูล", rank: 0 };
+  // ThaiWater's reservoir legend (% of storage capacity).
+  const DAM_STATUS = [
+    { cls: "s5", label: "เกินความจุ", min: 100 },
+    { cls: "s4", label: "น้ำมาก", min: 80 },
+    { cls: "s3", label: "ปกติ", min: 30 },
+    { cls: "s2", label: "น้ำน้อย", min: -Infinity },
+  ];
   STATUS.forEach((s, i) => (s.rank = STATUS.length - i));
 
   const ADVICE = {
@@ -29,12 +39,27 @@
   };
 
   let stations = [];
+  let dams = [];
   let myPos = null; // {lat, lng}
   let map, markerLayer, meMarker;
 
   function statusOf(st) {
     if (st.pct == null) return NO_DATA;
     return STATUS.find((s) => st.pct >= s.min);
+  }
+
+  function damStatusOf(d) {
+    return d.pct == null ? NO_DATA : DAM_STATUS.find((s) => d.pct >= s.min);
+  }
+
+  const isRising = (s) => s.tr != null && s.tr >= RISE_CM;
+
+  function trendHtml(s) {
+    if (s.tr == null) return "";
+    const span = `ใน ${s.trh} ชม.`;
+    if (s.tr >= RISE_CM) return `<span class="trend up">▲ ขึ้น ${s.tr} ซม. ${span}</span>`;
+    if (s.tr <= -RISE_CM) return `<span class="trend down">▼ ลง ${-s.tr} ซม. ${span}</span>`;
+    return `<span class="trend flat">≈ ทรงตัว</span>`;
   }
 
   function km(a, b) {
@@ -44,16 +69,23 @@
     return 2 * R * Math.asin(Math.sqrt(x));
   }
 
-  function fmtTime(iso) {
-    if (!iso) return "-";
-    const d = new Date(iso.replace(" ", "T"));
-    if (isNaN(d)) return iso;
-    return d.toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  // ThaiWater timestamps are Bangkok local time without an offset.
+  function parseTime(v) {
+    if (!v) return null;
+    const str = String(v).replace(" ", "T");
+    const d = new Date(/^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?$/.test(str) ? str + "+07:00" : str);
+    return isNaN(d) ? null : d;
   }
 
-  function ageHours(iso) {
-    const d = new Date(String(iso || "").replace(" ", "T"));
-    return isNaN(d) ? Infinity : (Date.now() - d) / 36e5;
+  function fmtTime(v) {
+    const d = parseTime(v);
+    if (!d) return v || "-";
+    return d.toLocaleString("th-TH", { timeZone: "Asia/Bangkok", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function ageHours(v) {
+    const d = parseTime(v);
+    return d ? (Date.now() - d) / 36e5 : Infinity;
   }
 
   // ---------- data ----------
@@ -71,6 +103,10 @@
       $("updated").textContent = "โหลดข้อมูลไม่สำเร็จ ตรวจสอบอินเทอร์เน็ต แล้วลองใหม่";
       console.error(err);
     }
+    try {
+      const res = await fetch(DAMS_URL, { cache: "no-cache" });
+      if (res.ok) dams = (await res.json()).dams || [];
+    } catch (err) { console.warn("dams", err); }
     fillProvinces();
     const savedProv = store.get("prov");
     if (savedProv) { $("province").value = savedProv; }
@@ -92,7 +128,7 @@
       // Province view: every station in the province, most critical first.
       rows = stations.filter((s) => s.prov === prov)
         .map((s) => (myPos ? { ...s, dist: km(myPos, s) } : s))
-        .sort((a, b) => statusOf(b).rank - statusOf(a).rank || (b.pct ?? -1) - (a.pct ?? -1));
+        .sort((a, b) => statusOf(b).rank - statusOf(a).rank || isRising(b) - isRising(a) || (b.pct ?? -1) - (a.pct ?? -1));
     } else if (myPos) {
       rows = stations.map((s) => ({ ...s, dist: km(myPos, s) }))
         .sort((a, b) => a.dist - b.dist)
@@ -113,13 +149,48 @@
         <div class="row"><span class="name">${esc(s.name)}</span><span class="badge ${st.cls}">${st.label}</span></div>
         <div class="small muted">${esc(s.amp ? "อ." + s.amp + " " : "")}จ.${esc(s.prov)}${s.dist != null ? ` · ห่าง ${s.dist.toFixed(1)} กม.` : ""}</div>
         <div class="small">${pct}${pct && diffTxt ? " · " : ""}${diffTxt}</div>
+        ${s.tr != null ? `<div class="small">${trendHtml(s)}</div>` : ""}
         <div class="bar" style="color:var(--${st.cls})"><i style="width:${Math.min(100, Math.max(0, s.pct ?? 0))}%"></i></div>
         <div class="small muted">วัดเมื่อ ${fmtTime(s.t)}${stale ? " ⚠️ ข้อมูลเก่า" : ""}
           · <a href="#" data-goto="${s.lat},${s.lng}">ดูบนแผนที่</a></div>
       </li>`;
     }).join("");
 
+    renderDams(prov);
     renderProvHotlines(prov);
+  }
+
+  function renderDams(prov) {
+    let rows = [];
+    if (prov) {
+      rows = dams.filter((d) => d.prov === prov)
+        .map((d) => (myPos ? { ...d, dist: km(myPos, d) } : d))
+        .sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1));
+    } else if (myPos) {
+      rows = dams.map((d) => ({ ...d, dist: km(myPos, d) }))
+        .filter((d) => d.dist <= DAM_KM)
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, 5);
+    }
+    if (!rows.length) { $("dams").innerHTML = ""; return; }
+    const items = rows.map((d) => {
+      const st = damStatusOf(d);
+      const flow = [
+        d.inflow != null ? `น้ำไหลเข้า ${d.inflow}` : "",
+        d.released != null ? `ระบายออก ${d.released}` : "",
+      ].filter(Boolean).join(" · ");
+      return `<li class="${st.cls}">
+        <div class="row"><span class="name">🏞️ ${esc(d.name)}</span><span class="badge ${st.cls}">${st.label}</span></div>
+        <div class="small muted">${d.size === "large" ? "เขื่อนขนาดใหญ่" : "อ่างขนาดกลาง"} · จ.${esc(d.prov)}${d.dist != null ? ` · ห่าง ${d.dist.toFixed(0)} กม.` : ""}</div>
+        <div class="small">${d.pct != null ? `${d.pct.toFixed(0)}% ของความจุ` : "ไม่มีข้อมูล"}${d.storage != null ? ` (${d.storage} ล้าน ลบ.ม.)` : ""}</div>
+        ${flow ? `<div class="small">${flow} <span class="muted">ล้าน ลบ.ม./วัน</span></div>` : ""}
+        <div class="bar" style="color:var(--${st.cls})"><i style="width:${Math.min(100, Math.max(0, d.pct ?? 0))}%"></i></div>
+        <div class="small muted">ข้อมูลวันที่ ${esc(d.t || "-")} · <a href="#" data-goto="${d.lat},${d.lng}">ดูบนแผนที่</a></div>
+      </li>`;
+    }).join("");
+    $("dams").innerHTML = `<h2 class="section">เขื่อน / อ่างเก็บน้ำ${prov ? ` ใน จ.${esc(prov)}` : ` ในรัศมี ${DAM_KM} กม.`}</h2>
+      <p class="small muted">ถ้าเขื่อนน้ำมากและเพิ่มการระบาย พื้นที่ท้ายเขื่อนอาจมีน้ำเพิ่มขึ้นภายในไม่กี่ชั่วโมง</p>
+      <ul class="list">${items}</ul>`;
   }
 
   function renderSummary(rows, prov) {
@@ -145,7 +216,15 @@
       return;
     }
     const counts = n5 || n4 ? `ล้นตลิ่ง ${n5} · น้ำมาก ${n4} สถานี ${where}` : `สถานีทั้งหมด ${where} ไม่พบระดับน้ำสูง`;
-    el.innerHTML = `<div class="alert ${st.cls}">${counts}<p>${ADVICE[st.cls] || "ติดตามข้อมูลต่อเนื่อง"}</p></div>`;
+    const rising = pool.filter(isRising);
+    let risingTxt = "";
+    if (rising.length) {
+      const top = rising.reduce((m, s) => (s.tr > m.tr ? s : m), rising[0]);
+      risingTxt = `<p>▲ น้ำกำลังขึ้น ${rising.length} สถานี (เร็วสุด +${top.tr} ซม. ใน ${top.trh} ชม. ที่ ${esc(top.name)}) เตรียมพร้อมไว้ก่อน</p>`;
+    }
+    // A high station that is still rising deserves the stronger warning colour.
+    const cls = st.cls === "s4" && rising.some((s) => statusOf(s).rank >= 4) ? "s5" : st.cls;
+    el.innerHTML = `<div class="alert ${cls}">${counts}${risingTxt}<p>${ADVICE[st.cls] || "ติดตามข้อมูลต่อเนื่อง"}</p></div>`;
   }
 
   function renderProvHotlines(prov) {
@@ -190,7 +269,7 @@
     render();
   });
 
-  $("list").addEventListener("click", (e) => {
+  $("tab-near").addEventListener("click", (e) => {
     const a = e.target.closest("[data-goto]");
     if (!a) return;
     e.preventDefault();
@@ -203,9 +282,7 @@
   function initMap() {
     if (map || !window.L) return;
     map = L.map("map", { preferCanvas: true }).setView([13.5, 100.8], 6);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 18, attribution: "&copy; OpenStreetMap · ข้อมูลน้ำ ThaiWater",
-    }).addTo(map);
+    addBaseLayer();
     markerLayer = L.layerGroup().addTo(map);
     const color = (cls) => getComputedStyle(document.documentElement).getPropertyValue("--" + cls).trim();
     // Draw calmer stations first so critical ones sit on top.
@@ -220,7 +297,37 @@
         `<span style="color:#666">วัดเมื่อ ${fmtTime(s.t)}</span>`
       ).addTo(markerLayer);
     });
+    const damColor = (d) => color(damStatusOf(d).cls) || "#9aa3af";
+    dams.forEach((d) => {
+      const st = damStatusOf(d);
+      L.marker([d.lat, d.lng], {
+        icon: L.divIcon({ className: "dam-icon", html: `<i style="background:${damColor(d)}"></i>`, iconSize: [16, 16] }),
+      }).bindPopup(
+        `<b>🏞️ ${esc(d.name)}</b><br>จ.${esc(d.prov)}<br>` +
+        `<b>${st.label}</b>${d.pct != null ? ` (${d.pct.toFixed(0)}% ของความจุ)` : ""}<br>` +
+        (d.released != null ? `ระบายออก ${d.released} ล้าน ลบ.ม./วัน<br>` : "") +
+        `<span style="color:#666">ข้อมูลวันที่ ${esc(d.t || "-")}</span>`
+      ).addTo(markerLayer);
+    });
     if (myPos) showMe();
+  }
+
+  // CARTO basemap (built on OpenStreetMap data); falls back to the standard OSM
+  // tiles if CARTO fails to load.
+  function addBaseLayer() {
+    const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a> · ข้อมูลน้ำ ThaiWater';
+    const carto = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+      maxZoom: 19, subdomains: "abcd", attribution,
+    }).addTo(map);
+    let loaded = false, errors = 0;
+    carto.on("tileload", () => { loaded = true; });
+    carto.on("tileerror", () => {
+      if (loaded || ++errors < 4) return;
+      map.removeLayer(carto);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19, attribution: "&copy; OpenStreetMap · ข้อมูลน้ำ ThaiWater",
+      }).addTo(map);
+    });
   }
 
   function showMe() {

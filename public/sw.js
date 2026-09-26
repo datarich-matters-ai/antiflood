@@ -1,6 +1,6 @@
 // Offline support: app shell is cache-first, water data is network-first so
 // people still see the last known levels when the signal drops.
-const CACHE = "antiflood-v1";
+const CACHE = "antiflood-v2";
 const SHELL = [
   "./", "index.html", "style.css", "app.js", "config.js", "manifest.webmanifest",
   "icon.svg", "icon-192.png", "vendor/leaflet.css", "vendor/leaflet.js",
@@ -23,10 +23,10 @@ self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  if (url.hostname.endsWith("tile.openstreetmap.org")) return; // don't hoard map tiles
+  if (url.hostname.endsWith("tile.openstreetmap.org") || url.hostname.endsWith("basemaps.cartocdn.com")) return; // don't hoard map tiles
 
-  const networkFirst = url.pathname.endsWith("/data/waterlevel.json") || req.mode === "navigate"
-    || url.pathname.endsWith("/config.js") || url.pathname.endsWith("/app.js");
+  const networkFirst = url.pathname.includes("/data/") || req.mode === "navigate"
+    || /\.(js|css)$/.test(url.pathname) && !url.pathname.includes("/vendor/");
   if (networkFirst) {
     e.respondWith(
       fetch(req)

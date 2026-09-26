@@ -4,7 +4,9 @@
 
 ## ฟีเจอร์
 - **ใกล้ฉัน**: ใช้ GPS หาสถานีวัดระดับน้ำที่ใกล้ที่สุด แสดงสถานะ (ล้นตลิ่ง / น้ำมาก / ปกติ / น้ำน้อย) พร้อมคำแนะนำว่าควรทำอะไร หรือเลือกดูทั้งจังหวัด
-- **แผนที่**: แสดงทุกสถานีทั่วประเทศแยกสีตามสถานะ
+- **แนวโน้มน้ำ**: บอกว่าน้ำกำลังขึ้นหรือลงกี่ ซม. ในช่วง ~6 ชม. ล่าสุด
+- **เขื่อน/อ่างเก็บน้ำ**: % ความจุ น้ำไหลเข้า และปริมาณการระบาย ของเขื่อนใกล้ตัว
+- **แผนที่**: แสดงทุกสถานีและเขื่อนทั่วประเทศแยกสีตามสถานะ
 - **ขอความช่วยเหลือ**: กรอกจำนวนคน กลุ่มเปราะบาง และสิ่งที่ต้องการ แอปแนบพิกัด GPS แล้วแชร์ผ่าน LINE, SMS หรือคัดลอกไปโพสต์ได้
 - เบอร์ฉุกเฉินกดโทรได้ทันที, เช็กลิสต์เตรียมรับน้ำ, ลิงก์แหล่งข้อมูลทางการ
 - ใช้งานออฟไลน์ได้ โดยแสดงข้อมูลล่าสุดที่เคยโหลดไว้
@@ -19,7 +21,7 @@
 
 การดึงข้อมูลตามรอบเวลาทำงานบน default branch ของ repo
 
-GitHub Pages สำหรับ private repo ต้องใช้แพ็กเกจที่เสียเงิน ถ้า repo เป็น private และไม่อยากเปิดเป็น public ให้ deploy โฟลเดอร์ `public/` ไป Netlify หรือ Cloudflare Pages แทน แล้วรัน `node scripts/fetch-waterlevel.mjs` ตามรอบเวลา
+GitHub Pages สำหรับ private repo ต้องใช้แพ็กเกจที่เสียเงิน ถ้า repo เป็น private และไม่อยากเปิดเป็น public ให้ deploy โฟลเดอร์ `public/` ไป Netlify หรือ Cloudflare Pages แทน แล้วรัน `node scripts/fetch-data.mjs` ตามรอบเวลา
 
 ## ปรับแต่งรายจังหวัด
 แก้ `public/config.js`:
@@ -28,11 +30,11 @@ GitHub Pages สำหรับ private repo ต้องใช้แพ็ก�
 
 ## รันบนเครื่อง
 ```sh
-node scripts/fetch-waterlevel.mjs      # สร้าง public/data/waterlevel.json
+node scripts/fetch-data.mjs      # สร้าง public/data/waterlevel.json
 cd public && python3 -m http.server 8000
 ```
 
 ## โครงสร้าง
 - `public/`: ตัวแอป (HTML/CSS/JS ล้วน ไม่มี build step), Leaflet อยู่ใน `public/vendor/`
-- `scripts/fetch-waterlevel.mjs`: ดึงข้อมูลจาก ThaiWater แล้วย่อเหลือเฉพาะฟิลด์ที่ใช้
+- `scripts/fetch-data.mjs`: ดึงระดับน้ำและข้อมูลเขื่อนจาก ThaiWater แล้วย่อเหลือเฉพาะฟิลด์ที่ใช้ แนวโน้มคำนวณจากประวัติ 12 ชม. (`data/history.json`) ที่เก็บต่อจากรอบก่อน ไม่ต้องเรียก API เพิ่ม ถ้า ThaiWater ล่ม จะใช้ข้อมูลรอบล่าสุดต่อไป
 - `.github/workflows/deploy.yml`: ดึงข้อมูลตามรอบเวลาและ deploy

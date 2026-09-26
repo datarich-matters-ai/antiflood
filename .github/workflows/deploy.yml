@@ -31,15 +31,10 @@ jobs:
           node-version: 22
       - id: pages
         uses: actions/configure-pages@v5
-      - name: Fetch water levels
+      - name: Fetch water levels and dams
         env:
           PAGES_URL: ${{ steps.pages.outputs.base_url }}
-        run: |
-          if ! node scripts/fetch-waterlevel.mjs public/data/waterlevel.json; then
-            echo "::warning::ThaiWater fetch failed; redeploying last published data"
-            mkdir -p public/data
-            curl -sfL "$PAGES_URL/data/waterlevel.json" -o public/data/waterlevel.json
-          fi
+        run: node scripts/fetch-data.mjs public/data
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
