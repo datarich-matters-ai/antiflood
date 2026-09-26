@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>น้ำท่วม: เช็คระดับน้ำ</title>
+  <meta name="description" content="เช็คระดับน้ำใกล้บ้าน แชร์พิกัดขอความช่วยเหลือ และเบอร์ฉุกเฉิน">
+  <meta name="theme-color" content="#0b5cab">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>🌊 เช็คระดับน้ำ</h1>
+    <div id="updated" class="muted small">กำลังโหลดข้อมูล…</div>
+  </header>
+
+  <main>
+    <!-- ใกล้ฉัน -->
+    <section id="tab-near" class="tab active">
+      <div class="controls">
+        <button id="btn-locate" class="btn primary">📍 ใช้ตำแหน่งของฉัน</button>
+        <select id="province" aria-label="เลือกจังหวัด">
+          <option value="">— หรือเลือกจังหวัด —</option>
+        </select>
+      </div>
+      <div id="summary"></div>
+      <ul id="list" class="list"></ul>
+      <div id="prov-hotlines"></div>
+    </section>
+
+    <!-- แผนที่ -->
+    <section id="tab-map" class="tab">
+      <div id="map"></div>
+      <div class="legend small">
+        <span><i class="dot s5"></i>ล้นตลิ่ง</span>
+        <span><i class="dot s4"></i>น้ำมาก</span>
+        <span><i class="dot s3"></i>ปกติ</span>
+        <span><i class="dot s2"></i>น้ำน้อย</span>
+        <span><i class="dot s0"></i>ไม่มีข้อมูล</span>
+      </div>
+    </section>
+
+    <!-- ขอความช่วยเหลือ -->
+    <section id="tab-sos" class="tab">
+      <div class="card sos">
+        <h2>🆘 ขอความช่วยเหลือ</h2>
+        <p class="small">กรอกข้อมูลแล้วกดส่ง แอปจะแนบพิกัด GPS ให้ ส่งต่อให้ญาติ กลุ่มอาสา หรือกู้ภัยได้ทันที</p>
+        <label>จำนวนคน <input id="sos-people" type="number" min="1" inputmode="numeric" placeholder="เช่น 4"></label>
+        <label>กลุ่มเปราะบาง
+          <input id="sos-vuln" placeholder="เช่น ผู้สูงอายุติดเตียง 1, เด็กเล็ก 2">
+        </label>
+        <label>ต้องการ
+          <input id="sos-need" placeholder="เช่น เรือ, อาหาร, ยา, น้ำดื่ม">
+        </label>
+        <label>เบอร์ติดต่อกลับ <input id="sos-phone" type="tel" inputmode="tel" placeholder="08x-xxx-xxxx"></label>
+        <label>รายละเอียดเพิ่ม / จุดสังเกต
+          <textarea id="sos-note" rows="2" placeholder="เช่น บ้านสีฟ้า หลังวัด น้ำสูงระดับอก"></textarea>
+        </label>
+        <div id="sos-loc" class="small muted">ยังไม่ได้ระบุพิกัด</div>
+        <button id="sos-getloc" class="btn">📍 ระบุพิกัดของฉัน</button>
+        <div class="btn-row">
+          <button id="sos-share" class="btn danger">ส่ง / แชร์</button>
+          <a id="sos-line" class="btn line" target="_blank" rel="noopener">LINE</a>
+          <a id="sos-sms" class="btn">SMS</a>
+          <button id="sos-copy" class="btn">คัดลอก</button>
+        </div>
+        <pre id="sos-preview" class="preview"></pre>
+      </div>
+
+      <div class="card">
+        <h2>📞 เบอร์ฉุกเฉิน</h2>
+        <div id="hotlines" class="hotlines"></div>
+      </div>
+
+      <div class="card">
+        <h2>✅ ทำทันทีเมื่อน้ำกำลังมา</h2>
+        <ol class="small">
+          <li>ตัดไฟที่เบรกเกอร์หลัก ก่อนน้ำถึงปลั๊ก ห้ามแตะอุปกรณ์ไฟฟ้าขณะตัวเปียก</li>
+          <li>ชาร์จมือถือและพาวเวอร์แบงก์ให้เต็ม เก็บเอกสารสำคัญใส่ถุงกันน้ำ</li>
+          <li>ยกของขึ้นที่สูง เตรียมน้ำดื่ม อาหารแห้ง ยาประจำตัว ไฟฉาย นกหวีด</li>
+          <li>ย้ายรถไปที่สูง อย่าขับหรือเดินฝ่ากระแสน้ำ (น้ำไหลแรงสูงแค่ 15 ซม. ก็ทำให้ล้มได้)</li>
+          <li>ถ้าติดอยู่ในบ้าน ขึ้นชั้นบน ทำสัญลักษณ์ผ้าสีสดให้เห็นจากภายนอก</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h2>🔗 แหล่งข้อมูลทางการ</h2>
+        <ul id="links" class="small"></ul>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabs">
+    <button data-tab="near" class="active">📍<span>ใกล้ฉัน</span></button>
+    <button data-tab="map">🗺️<span>แผนที่</span></button>
+    <button data-tab="sos" class="sos-tab">🆘<span>ขอความช่วยเหลือ</span></button>
+  </nav>
+
+  <script src="config.js"></script>
+  <script src="vendor/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
