@@ -90,6 +90,9 @@
 
   // ---------- data ----------
   async function load() {
+    const damsReq = fetch(DAMS_URL, { cache: "no-cache" })
+      .then((res) => (res.ok ? res.json() : null))
+      .catch((err) => { console.warn("dams", err); return null; });
     try {
       const res = await fetch(DATA_URL, { cache: "no-cache" });
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -103,11 +106,9 @@
       $("updated").textContent = "โหลดข้อมูลไม่สำเร็จ ตรวจสอบอินเทอร์เน็ต แล้วลองใหม่";
       console.error(err);
     }
-    try {
-      const res = await fetch(DAMS_URL, { cache: "no-cache" });
-      if (res.ok) dams = (await res.json()).dams || [];
-    } catch (err) { console.warn("dams", err); }
+    dams = (await damsReq)?.dams || [];
     fillProvinces();
+    drawMarkers();
     const savedProv = store.get("prov");
     if (savedProv) { $("province").value = savedProv; }
     render();
@@ -284,7 +285,16 @@
     map = L.map("map", { preferCanvas: true }).setView([13.5, 100.8], 6);
     addBaseLayer();
     markerLayer = L.layerGroup().addTo(map);
-    const color = (cls) => getComputedStyle(document.documentElement).getPropertyValue("--" + cls).trim();
+    drawMarkers();
+    if (myPos) showMe();
+  }
+
+  // Called when the map opens and again whenever data finishes loading, so the
+  // map is never left empty if it was opened before the data arrived.
+  function drawMarkers() {
+    if (!map) return;
+    markerLayer.clearLayers();
+    const color = (cls) => getComputedStyle(document.documentElement).getPropertyValue("--" + cls).trim() || "#9aa3af";
     // Draw calmer stations first so critical ones sit on top.
     [...stations].sort((a, b) => statusOf(a).rank - statusOf(b).rank).forEach((s) => {
       const st = statusOf(s);
@@ -294,14 +304,14 @@
         `<b>${esc(s.name)}</b><br>อ.${esc(s.amp)} จ.${esc(s.prov)}<br>` +
         `<b>${st.label}</b>${s.pct != null ? ` (${s.pct.toFixed(0)}% ของตลิ่ง)` : ""}<br>` +
         `ระดับน้ำ ${s.wl ?? "-"} ม.รทก. · ตลิ่ง ${s.bank ?? "-"} ม.รทก.<br>` +
+        (s.tr != null ? `${trendHtml(s)}<br>` : "") +
         `<span style="color:#666">วัดเมื่อ ${fmtTime(s.t)}</span>`
       ).addTo(markerLayer);
     });
-    const damColor = (d) => color(damStatusOf(d).cls) || "#9aa3af";
     dams.forEach((d) => {
       const st = damStatusOf(d);
       L.marker([d.lat, d.lng], {
-        icon: L.divIcon({ className: "dam-icon", html: `<i style="background:${damColor(d)}"></i>`, iconSize: [16, 16] }),
+        icon: L.divIcon({ className: "dam-icon", html: `<i style="background:${color(st.cls)}"></i>`, iconSize: [16, 16] }),
       }).bindPopup(
         `<b>🏞️ ${esc(d.name)}</b><br>จ.${esc(d.prov)}<br>` +
         `<b>${st.label}</b>${d.pct != null ? ` (${d.pct.toFixed(0)}% ของความจุ)` : ""}<br>` +
@@ -309,24 +319,30 @@
         `<span style="color:#666">ข้อมูลวันที่ ${esc(d.t || "-")}</span>`
       ).addTo(markerLayer);
     });
-    if (myPos) showMe();
   }
 
-  // CARTO basemap (built on OpenStreetMap data); falls back to the standard OSM
-  // tiles if CARTO fails to load.
-  function addBaseLayer() {
-    const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a> · ข้อมูลน้ำ ThaiWater';
-    const carto = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-      maxZoom: 19, subdomains: "abcd", attribution,
-    }).addTo(map);
-    let loaded = false, errors = 0;
-    carto.on("tileload", () => { loaded = true; });
-    carto.on("tileerror", () => {
-      if (loaded || ++errors < 4) return;
-      map.removeLayer(carto);
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19, attribution: "&copy; OpenStreetMap · ข้อมูลน้ำ ThaiWater",
-      }).addTo(map);
+  // Basemap providers, tried in order: if one fails before any tile loads, the
+  // next one takes over.
+  const BASEMAPS = [
+    ["https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+      { subdomains: "abcd", attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>' }],
+    ["https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }],
+    ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+      { attribution: "Tiles &copy; Esri" }],
+  ];
+
+  function addBaseLayer(i = 0) {
+    if (i >= BASEMAPS.length) return;
+    const [url, opts] = BASEMAPS[i];
+    const layer = L.tileLayer(url, { maxZoom: 19, ...opts, attribution: opts.attribution + " · ข้อมูลน้ำ ThaiWater" }).addTo(map);
+    let loaded = false, errors = 0, done = false;
+    layer.on("tileload", () => { loaded = true; });
+    layer.on("tileerror", () => {
+      if (loaded || done || ++errors < 3) return;
+      done = true;
+      map.removeLayer(layer);
+      addBaseLayer(i + 1);
     });
   }
 

@@ -1,5 +1,5 @@
 // Fetches water levels and dam storage from ThaiWater (สสน.) and writes
-// compact JSON files for the app. Runs in GitHub Actions every ~20 minutes,
+// compact JSON files for the app. Runs in GitHub Actions every ~5 minutes,
 // so browsers never call ThaiWater directly.
 //
 // Water-level trend: ThaiWater's per-station graph API would need one request

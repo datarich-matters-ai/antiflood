@@ -6,7 +6,7 @@ on:
   push:
     branches: [main, claude/keen-fermi-b7enci]
   schedule:
-    - cron: "*/20 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
