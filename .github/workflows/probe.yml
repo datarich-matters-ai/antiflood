@@ -5,21 +5,18 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Traffy docs page
-        run: curl -sSL -m 30 https://apitest2.traffy.in.th/ | sed 's/<[^>]*>/ /g' | tr -s ' \n' | head -c 4000; echo
-      - name: Traffy search (flood)
+      - name: Traffy api page scripts
         run: |
-          for q in "limit=3&type=น้ำท่วม" "limit=3&problem_type_abdul=น้ำท่วม" "limit=3&type=%E0%B8%99%E0%B9%89%E0%B8%B3%E0%B8%97%E0%B9%88%E0%B8%A7%E0%B8%A1&state_type=start"; do
-            echo "=== $q"; curl -sS -m 30 -G "https://publicapi.traffy.in.th/share/teamchadchart/search" --data-urlencode "x=1" -d "$q" | head -c 2500; echo; done
-      - name: Traffy nationwide
+          curl -sSL -m 30 https://apitest2.traffy.in.th/ -o page.html
+          grep -oE '(src|href)="[^"]+\.js[^"]*"' page.html | head
+          for js in $(grep -oE 'src="[^"]+\.js[^"]*"' page.html | sed 's/src="//;s/"$//'); do
+            case "$js" in http*) u="$js";; /*) u="https://apitest2.traffy.in.th$js";; *) u="https://apitest2.traffy.in.th/$js";; esac
+            curl -sSL -m 30 "$u" -o s.js || continue
+            echo "== $u"; grep -oE '.{0,120}(search\?|publicapi|/share/)[^"'"'"'`]{0,200}' s.js | head -15
+          done
+          grep -oE '.{0,100}(search\?|publicapi|/share/|problem_type|state_type)[^"<]{0,200}' page.html | head -20
+      - name: Traffy search variants
         run: |
-          for u in "https://publicapi.traffy.in.th/share/fondue/search?limit=2" "https://publicapi.traffy.in.th/share/teamchadchart/search?limit=2&province=เชียงราย"; do
-            echo "=== $u"; curl -sS -m 30 "$u" | head -c 1500; echo; done
-      - name: DOH HDMS
-        run: |
-          curl -sSL -m 30 -o hdms.html -w "%{http_code} %{url_effective}\n" https://hdms.doh.go.th/ || true
-          sed 's/<[^>]*>/ /g' hdms.html | tr -s ' \n' | head -c 1500; echo
-          grep -oE '(https?:)?//[^"'"'"' ]*(api|json|geojson|service)[^"'"'"' ]*' hdms.html | sort -u | head -20
-          grep -oE 'src="[^"]+\.js"' hdms.html | head
-      - name: ThaiWater rain
-        run: curl -sS -m 30 https://api-v3.thaiwater.net/api/v1/thaiwater30/public/rain_24h | head -c 1200; echo
+          T=$(python3 -c "import urllib.parse;print(urllib.parse.quote('น้ำท่วม'))")
+          for q in "limit=2" "output_format=json&limit=2" "limit=2&type=$T" "limit=2&problem_type=$T" "limit=2&offset=0&sort=DESC"; do
+            echo "=== $q"; curl -sS -m 90 -w "\n[%{http_code} %{time_total}s]\n" "https://publicapi.traffy.in.th/share/teamchadchart/search?$q" | head -c 1800; echo; done
