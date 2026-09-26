@@ -13,6 +13,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write # lets each run queue the next refresh
 
 concurrency:
   group: pages
@@ -44,3 +45,26 @@ jobs:
           path: public
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # GitHub's cron schedule is best-effort and can go hours without firing, so
+  # each run also queues the next one about 5 minutes after it started. The
+  # check stops a second chain from forming if a scheduled run joins in.
+  next-refresh:
+    needs: deploy
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Queue next refresh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          sleep 180
+          others=$(gh run list --workflow deploy.yml --limit 20 --json databaseId,status \
+            --jq "[.[] | select(.databaseId != ${{ github.run_id }}) | select(.status != \"completed\")] | length")
+          if [ "$others" -eq 0 ]; then
+            gh workflow run deploy.yml --ref "${{ github.ref_name }}"
+            echo "queued next refresh"
+          else
+            echo "another refresh is already pending; not queuing"
+          fi
