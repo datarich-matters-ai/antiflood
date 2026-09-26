@@ -5,11 +5,20 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Traffy map.js endpoints
+      - name: Traffy share API document
         run: |
-          curl -sSL -m 30 https://apitest2.traffy.in.th/js/map.js -o map.js
-          grep -nE 'base_url_api|publicapi|url_[a-z_]+ *=|axios\.(get|post)|fetch\(' map.js | cut -c1-260 | head -40
-      - name: Try geojson endpoints
+          curl -sSL -m 40 "https://www.traffy.in.th/?page_id=4434" -o doc.html
+          python3 - <<'PY'
+          import re,html
+          t=open('doc.html',encoding='utf-8',errors='ignore').read()
+          t=re.sub(r'<script.*?</script>|<style.*?</style>','',t,flags=re.S)
+          t=html.unescape(re.sub(r'<[^>]+>',' ',t)); t=re.sub(r'\s+',' ',t)
+          i=t.find('share'); 
+          for m in re.finditer(r'publicapi|v2/search|v2/geojson|parameter|พารามิเตอร์',t):
+              print('...',t[max(0,m.start()-200):m.start()+600]); print()
+          PY
+      - name: Try v2 endpoints
         run: |
-          for p in $(grep -oE 'base_url_api *\}?[`"+ ]*[^`"]*' map.js | grep -oE '/teamchadchart/[A-Za-z0-9_/?=&.-]+' | sort -u | head -8); do
-            echo "=== $p"; curl -sS -m 45 -w "\n[%{http_code} %{time_total}s %{size_download}B]\n" "https://publicapi.traffy.in.th/share$p" | head -c 700; echo; done
+          T=$(python3 -c "import urllib.parse;print(urllib.parse.quote('น้ำท่วม'))")
+          for q in "v2/search?limit=2" "v2/search?limit=2&text=$T" "v2/search?limit=2&problem_type_abdul=$T" "v2/geojson?limit=2&text=$T"; do
+            echo "=== $q"; curl -sS -m 60 -w "\n[%{http_code} %{time_total}s %{size_download}B]\n" "https://publicapi.traffy.in.th/share/$q" | head -c 2500; echo; done
