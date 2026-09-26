@@ -151,6 +151,35 @@ async function dams() {
   return out;
 }
 
+// ---------- rain gauges ----------
+// Rainfall stations nationwide (ThaiWater rain_24h): accumulated rain in the
+// last 24 h and, where the station reports it, the last hour.
+async function rainGauges() {
+  const raw = await getJson(`${BASE}/public/rain_24h`);
+  const rows = Array.isArray(raw?.data) ? raw.data : [];
+  const out = [];
+  for (const r of rows) {
+    const s = r.station || {};
+    const lat = num(s.tele_station_lat);
+    const lng = num(s.tele_station_long);
+    const r24 = num(r.rain_24h);
+    if (lat == null || lng == null || r24 == null) continue;
+    out.push({
+      name: th(s.tele_station_name),
+      prov: th(r.geocode?.province_name),
+      amp: th(r.geocode?.amphoe_name),
+      tam: th(r.geocode?.tumbon_name),
+      lat: round(lat, 5),
+      lng: round(lng, 5),
+      r24: round(r24, 1),
+      r1: round(num(r.rain_1h), 1),
+      t: r.rainfall_datetime || null,
+    });
+  }
+  if (!out.length) throw new Error("unexpected rain_24h response: no stations");
+  return out;
+}
+
 // ---------- weather overlays ----------
 // Rain radar frames (RainViewer), the latest Himawari infrared cloud image
 // (NASA GIBS) and tropical cyclones near Thailand (GDACS). Each part is
@@ -239,6 +268,16 @@ try {
   console.error(`::warning::dams: ${err.message}`);
   const prev = await getPrev("dams.json");
   if (prev) await write("dams.json", prev);
+}
+
+try {
+  const gauges = await rainGauges();
+  await write("rain.json", { updated, source: "ThaiWater (สสน.)", gauges });
+  console.log(`wrote ${gauges.length} rain gauges (${gauges.filter((g) => g.r1 != null).length} with 1 h rain)`);
+} catch (err) {
+  console.error(`::warning::rain: ${err.message}`);
+  const prev = await getPrev("rain.json");
+  if (prev) await write("rain.json", prev);
 }
 
 try {

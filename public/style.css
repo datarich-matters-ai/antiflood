@@ -175,3 +175,21 @@ label { display: block; margin: 8px 0; font-size: .95rem; }
 .rain-bars b { position: absolute; bottom: -17px; font-size: .7rem; font-weight: 400; color: var(--muted); }
 .rain-warn { margin: 6px 0; padding: 8px 10px; border-radius: 8px; background: #ffebee; color: #b71c1c; font-weight: 600; }
 .c3 { color: var(--s3); }
+
+/* route tab */
+.route-title { font-size: 1.1rem; margin: 4px 0 10px; }
+.pick-list { list-style: none; padding: 0; margin: 8px 0; }
+.pick-list button { width: 100%; text-align: left; font: inherit; font-size: .9rem; padding: 10px 12px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--text); cursor: pointer; }
+.risk { display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: 12px; color: #fff; margin: 8px 0; background: var(--s0); }
+.risk > b { font-size: 2.4rem; line-height: 1; }
+.risk.s5 { background: var(--s5); } .risk.s4 { background: var(--s4); } .risk.s3 { background: var(--s3); } .risk.s2 { background: var(--s2); color: #222; }
+.risk-parts { padding-left: 18px; margin: 6px 0; }
+.risk-parts b { display: inline-block; min-width: 2.2em; }
+.btn-row.two { grid-template-columns: 1fr 1fr; }
+#route-map { height: 300px; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 12px; }
+.rain-pin { background: none; border: 0; }
+.rain-pin span { display: inline-block; transform: translate(-50%, -50%); white-space: nowrap; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 8px; background: #e3f2fd; color: #0d47a1; border: 1px solid #90caf9; }
+.rain-pin .mid { background: #1e88e5; color: #fff; border-color: #fff; }
+.rain-pin .heavy { background: #6a1b9a; color: #fff; border-color: #fff; }
+.tabs button span { font-size: .7rem; }
+.btn-row.two .btn { white-space: normal; padding: 10px 8px; }

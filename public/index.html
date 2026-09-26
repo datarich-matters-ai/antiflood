@@ -74,6 +74,18 @@
       </div>
     </section>
 
+    <!-- เส้นทาง: ตอนนี้ตรงไหนท่วม ควรเลี่ยงทางไหน -->
+    <section id="tab-route" class="tab">
+      <h2 class="route-title">🚗 ตอนนี้ตรงไหนเสี่ยงน้ำท่วม ควรเลี่ยงทางไหน</h2>
+      <form id="route-form" class="controls" autocomplete="off">
+        <input id="route-q" type="search" enterkeyhint="search" placeholder="พิมพ์ชื่อเขต / อำเภอ / ถนน เช่น ลาดพร้าว, วิภาวดี, หาดใหญ่">
+        <button class="btn primary" type="submit">ค้นหา</button>
+      </form>
+      <button id="route-near" class="btn wide">📍 ใกล้ฉัน (รัศมี 3 กม.)</button>
+      <ul id="route-results" class="pick-list"></ul>
+      <div id="route-area"></div>
+    </section>
+
     <!-- ขอความช่วยเหลือ -->
     <section id="tab-sos" class="tab">
       <div class="card sos">
@@ -144,6 +156,7 @@
   <nav class="tabs">
     <button data-tab="near" class="active">📍<span>ใกล้ฉัน</span></button>
     <button data-tab="map">🗺️<span>แผนที่</span></button>
+    <button data-tab="route">🚗<span>เส้นทาง</span></button>
     <button data-tab="sos" class="sos-tab">🆘<span>ขอความช่วยเหลือ</span></button>
   </nav>
 

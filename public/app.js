@@ -41,6 +41,7 @@
   let stations = [];
   let dams = [];
   let wx = {}; // data/weather.json: radar frames, cloud image, storms
+  let gauges = []; // data/rain.json: rain stations
   let myPos = null; // {lat, lng}
   let map, markerLayer, meMarker;
 
@@ -94,6 +95,9 @@
     const wxReq = fetch("data/weather.json", { cache: "no-cache" })
       .then((res) => (res.ok ? res.json() : {}))
       .catch(() => ({}));
+    const rainReq = fetch("data/rain.json", { cache: "no-cache" })
+      .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null);
     const damsReq = fetch(DAMS_URL, { cache: "no-cache" })
       .then((res) => (res.ok ? res.json() : null))
       .catch((err) => { console.warn("dams", err); return null; });
@@ -112,8 +116,10 @@
     }
     dams = (await damsReq)?.dams || [];
     wx = await wxReq;
+    gauges = (await rainReq)?.gauges || [];
     fillProvinces();
     drawMarkers();
+    if (/^#r=/.test(location.hash)) showTab("route");
     const savedProv = store.get("prov");
     if (savedProv) { $("province").value = savedProv; }
     render();
@@ -642,11 +648,187 @@
     if (myPos) map.setView([myPos.lat, myPos.lng], 8);
   });
 
+  // ---------- route: flood risk around a place ----------
+  // Everything shown here comes from live data (ThaiWater stations, rain
+  // gauges, Open-Meteo forecast). The risk score is a transparent sum of those
+  // inputs, listed under it; it estimates risk, it does not confirm flooding.
+  const ROUTE_KEY = "route-area";
+  let routeMap = null, routeLayer = null, routeArea = null;
+
+  const trafficLink = (lat, lng, z = 15) => `https://www.google.com/maps/@${lat},${lng},${z}z/data=!5m1!1e1`;
+
+  function riskScore(area, near) {
+    const parts = [];
+    const maxR24 = Math.max(0, ...near.gauges.map((g) => g.r24 ?? 0));
+    const maxR1 = Math.max(0, ...near.gauges.map((g) => g.r1 ?? 0));
+    const rainPts = Math.min(35, (maxR24 / 90) * 35);
+    parts.push([rainPts, `ฝนสะสม 24 ชม. สูงสุดในพื้นที่ ${maxR24.toFixed(1)} มม.${maxR1 ? ` (ชั่วโมงล่าสุด ${maxR1.toFixed(1)} มม.)` : ""}`]);
+    const mm6 = area.fc ? area.fc.hours.slice(0, 6).reduce((a, h) => a + h.mm, 0) : null;
+    const fcPts = mm6 == null ? 0 : Math.min(25, (mm6 / 35) * 25);
+    parts.push([fcPts, mm6 == null ? "พยากรณ์ฝน 6 ชม.: โหลดไม่ได้" : `พยากรณ์ฝน 6 ชม. ข้างหน้า ${mm6.toFixed(1)} มม.`]);
+    const worst = near.stations.reduce((w, s) => (!w || statusOf(s).rank > statusOf(w).rank ? s : w), null);
+    let wlPts = 0, wlTxt = "ไม่มีสถานีวัดระดับน้ำในรัศมี 10 กม.";
+    if (worst) {
+      const r = statusOf(worst).rank; // s5 = 5, s4 = 4 ...
+      wlPts = r >= 5 ? 30 : r === 4 ? 18 : r === 3 ? 5 : 0;
+      const up = near.stations.filter(isRising).length;
+      if (up) wlPts = Math.min(40, wlPts + 10);
+      wlTxt = `แม่น้ำ/คลองใกล้เคียง: ${statusOf(worst).label} ที่ ${esc(worst.name)}${up ? ` · น้ำกำลังขึ้น ${up} สถานี` : ""}`;
+    }
+    parts.push([wlPts, wlTxt]);
+    const score = Math.round(parts.reduce((a, [p]) => a + p, 0));
+    const level = score >= 70 ? ["สูงมาก", "s5"] : score >= 45 ? ["สูง", "s4"] : score >= 20 ? ["ปานกลาง", "s2"] : ["ต่ำ", "s3"];
+    return { score, level, parts };
+  }
+
+  async function openArea(area) {
+    routeArea = area;
+    store.set(ROUTE_KEY, JSON.stringify(area));
+    history.replaceState(null, "", `#r=${area.lat.toFixed(5)},${area.lng.toFixed(5)},${area.km},${encodeURIComponent(area.name)}`);
+    $("route-results").innerHTML = "";
+    const el = $("route-area");
+    el.innerHTML = `<div class="card small muted">กำลังรวบรวมข้อมูลพื้นที่ ${esc(area.name)}…</div>`;
+
+    const near = {
+      gauges: gauges.map((g) => ({ ...g, dist: km(area, g) })).filter((g) => g.dist <= area.km + 5)
+        .sort((a, b) => (b.r1 ?? -1) - (a.r1 ?? -1) || b.r24 - a.r24),
+      stations: stations.map((s) => ({ ...s, dist: km(area, s) })).filter((s) => s.dist <= 10)
+        .sort((a, b) => statusOf(b).rank - statusOf(a).rank || a.dist - b.dist),
+    };
+    try { area.fc = await rainForecast(area.lat, area.lng); } catch { area.fc = null; }
+    if (routeArea !== area) return;
+    const risk = riskScore(area, near);
+    const heavy = near.gauges.filter((g) => (g.r1 ?? 0) >= 10 || g.r24 >= 35);
+
+    el.innerHTML = `
+      <div class="card">
+        <div class="row"><h2>📍 ${esc(area.name)}</h2><span class="muted small">รัศมี ${area.km} กม.</span></div>
+        <div class="risk ${risk.level[1]}"><b>${risk.score}</b><span>คะแนนโอกาสน้ำท่วม<br><b>${risk.level[0]}</b></span></div>
+        <ul class="small risk-parts">${risk.parts.map(([p, t]) => `<li><b>+${Math.round(p)}</b> ${t}</li>`).join("")}</ul>
+        <p class="small muted">คะแนนประเมินจากข้อมูลจริงข้างต้น (ฝนจริง ฝนพยากรณ์ ระดับน้ำ) ไม่ได้ยืนยันว่าถนนเส้นใดท่วม</p>
+        ${area.fc ? `<div class="rain-now ${rainVerdict(area.fc)[1]}">${rainVerdict(area.fc)[0]}</div>` : ""}
+        <div class="btn-row two">
+          <a class="btn primary" href="${trafficLink(area.lat, area.lng, area.km > 4 ? 13 : 14)}" target="_blank" rel="noopener">🚦 ดูจราจร Google Maps</a>
+          <button class="btn" id="route-share">🔗 แชร์ลิงก์พื้นที่นี้</button>
+        </div>
+      </div>
+      <div id="route-map"></div>
+      <div class="card">
+        <h2>🌧️ ฝนตกหนักตรงไหน</h2>
+        ${heavy.length ? "" : `<p class="small">ไม่มีสถานีวัดฝนในพื้นที่ที่ฝนหนัก (≥10 มม./ชม. หรือ ≥35 มม./24 ชม.)</p>`}
+        <ul class="list">${(heavy.length ? heavy : near.gauges.slice(0, 5)).slice(0, 10).map((g) => `
+          <li class="${(g.r1 ?? 0) >= 10 || g.r24 >= 35 ? "s5" : g.r24 >= 10 ? "s4" : "s3"}">
+            <div class="row"><span class="name">${esc(g.name)}</span><span class="small">${g.dist.toFixed(1)} กม.</span></div>
+            <div class="small">${g.r1 != null ? `ชั่วโมงล่าสุด <b>${g.r1} มม.</b> · ` : ""}24 ชม. <b>${g.r24} มม.</b> (${rain24Label(g.r24)[0]})</div>
+            <div class="small muted">ต.${esc(g.tam)} อ.${esc(g.amp)} จ.${esc(g.prov)} · ${fmtTime(g.t)} ·
+              <a href="${trafficLink(g.lat, g.lng)}" target="_blank" rel="noopener">🚦 จราจรตรงนี้</a></div>
+          </li>`).join("") || `<li class="s0 small">ไม่มีสถานีวัดฝนในรัศมี ${area.km + 5} กม.</li>`}</ul>
+      </div>
+      <div class="card">
+        <h2>💧 แม่น้ำ/คลองใกล้เคียง (10 กม.)</h2>
+        <ul class="list">${near.stations.slice(0, 8).map((s) => `
+          <li class="${statusOf(s).cls}">
+            <div class="row"><span class="name">${esc(s.name)}</span><span class="badge ${statusOf(s).cls}">${statusOf(s).label}</span></div>
+            <div class="small">${s.pct != null ? `${s.pct.toFixed(0)}% ของตลิ่ง · ` : ""}${s.dist.toFixed(1)} กม. ${trendHtml(s)}</div>
+            <div class="small muted">${fmtTime(s.t)} · <a href="${trafficLink(s.lat, s.lng)}" target="_blank" rel="noopener">🚦 จราจรตรงนี้</a></div>
+          </li>`).join("") || `<li class="s0 small">ไม่มีสถานีวัดระดับน้ำในรัศมี 10 กม.</li>`}</ul>
+      </div>
+      <div class="card">
+        <h2>🚧 ถนนปิด / รายงานจากประชาชน</h2>
+        <p class="small">แอปยังดึงข้อมูลส่วนนี้อัตโนมัติไม่ได้ (ระบบต้นทางไม่เปิดให้เชื่อมต่อจากภายนอกในขณะนี้) เช็กได้โดยตรงที่:</p>
+        <ul class="small">
+          <li>ทางหลวงน้ำท่วม/ผ่านไม่ได้: <a href="tel:1586">โทร 1586</a> (กรมทางหลวง) · <a href="tel:1146">1146</a> (ทางหลวงชนบท)</li>
+          <li>รายงานจากประชาชน พร้อมรูป: <a href="https://share.traffy.in.th/teamchadchart" target="_blank" rel="noopener">Traffy Fondue</a></li>
+          <li>สภาพจราจรสด: <a href="${trafficLink(area.lat, area.lng, 14)}" target="_blank" rel="noopener">Google Maps โหมดจราจร</a></li>
+        </ul>
+      </div>`;
+
+    $("route-share").addEventListener("click", async () => {
+      const url = location.href;
+      const text = `เช็กความเสี่ยงน้ำท่วม ${area.name}`;
+      if (navigator.share) { try { await navigator.share({ title: text, url }); return; } catch (e) { if (e.name === "AbortError") return; } }
+      try { await navigator.clipboard.writeText(url); alert("คัดลอกลิงก์แล้ว เปิดลิงก์นี้จะเห็นพื้นที่นี้ทันที"); } catch { prompt("คัดลอกลิงก์นี้", url); }
+    });
+    drawRouteMap(area, near);
+  }
+
+  function drawRouteMap(area, near) {
+    if (!window.L) return;
+    if (routeMap) { routeMap.remove(); routeMap = null; }
+    // Fit the view before adding layers: a circle has no bounds until the map has one.
+    routeMap = L.map("route-map", { preferCanvas: true })
+      .fitBounds(L.latLng(area.lat, area.lng).toBounds(area.km * 2000), { padding: [10, 10] });
+    addBaseLayer(routeMap);
+    routeLayer = L.layerGroup().addTo(routeMap);
+    L.circle([area.lat, area.lng], { radius: area.km * 1000, color: "#0b5cab", weight: 2, fillOpacity: 0.05 }).addTo(routeLayer);
+    near.gauges.forEach((g) => {
+      const heavy = (g.r1 ?? 0) >= 10 || g.r24 >= 35;
+      L.marker([g.lat, g.lng], {
+        icon: L.divIcon({ className: "rain-pin", html: `<span class="${heavy ? "heavy" : g.r24 >= 10 ? "mid" : ""}">🌧 ${g.r1 != null ? g.r1 : g.r24}</span>`, iconSize: null }),
+      }).bindPopup(`<div class="pop"><b>🌧️ ${esc(g.name)}</b><br>${g.r1 != null ? `ชั่วโมงล่าสุด ${g.r1} มม.<br>` : ""}24 ชม. ${g.r24} มม.<br>` +
+        `<a href="${trafficLink(g.lat, g.lng)}" target="_blank" rel="noopener">🚦 จราจรตรงนี้</a></div>`).addTo(routeLayer);
+    });
+    near.stations.forEach((s) => {
+      L.circleMarker([s.lat, s.lng], { radius: 8, weight: 2, color: "#fff", fillColor: cssColor(statusOf(s).cls), fillOpacity: 0.95 })
+        .bindPopup(stationPopup(s)).addTo(routeLayer);
+    });
+  }
+
+  async function searchPlace(q) {
+    const list = $("route-results");
+    list.innerHTML = `<li class="muted small">กำลังค้นหา…</li>`;
+    try {
+      const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=th&accept-language=th&limit=6&q=" + encodeURIComponent(q);
+      const res = await fetch(url);
+      const found = res.ok ? await res.json() : [];
+      if (!found.length) { list.innerHTML = `<li class="muted small">ไม่พบ "${esc(q)}" ลองพิมพ์ชื่อเขต อำเภอ หรือถนนอีกแบบ</li>`; return; }
+      list.innerHTML = found.map((f, i) => `<li><button data-i="${i}">${esc(f.display_name)}</button></li>`).join("");
+      list.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+        const f = found[Number(b.dataset.i)];
+        const [s0, n0, w0, e0] = (f.boundingbox || []).map(Number);
+        // Size the circle to the place: a district gets its extent, a road or point 3 km.
+        let radius = 3;
+        if (f.category !== "highway" && [s0, n0, w0, e0].every(Number.isFinite)) {
+          radius = Math.round(Math.min(10, Math.max(2, km({ lat: s0, lng: w0 }, { lat: n0, lng: e0 }) / 2)));
+        }
+        openArea({ lat: Number(f.lat), lng: Number(f.lon), km: radius, name: q.trim() || f.display_name.split(",")[0] });
+      }));
+    } catch {
+      list.innerHTML = `<li class="muted small">ค้นหาไม่ได้ (ไม่มีสัญญาณ?)</li>`;
+    }
+  }
+
+  $("route-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = $("route-q").value.trim();
+    if (q) searchPlace(q);
+  });
+  $("route-near").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true; btn.textContent = "กำลังหาตำแหน่ง…";
+    try { const p = await locate(); render(); openArea({ lat: p.lat, lng: p.lng, km: 3, name: "รอบตัวฉัน" }); }
+    catch (err) { alert(err.message); }
+    btn.disabled = false; btn.textContent = "📍 ใกล้ฉัน (รัศมี 3 กม.)";
+  });
+
+  // Shared links (#r=lat,lng,km,name) open straight into that area; otherwise
+  // the last area this person looked at is remembered.
+  function initialArea() {
+    const m = location.hash.match(/^#r=(-?[\d.]+),(-?[\d.]+),(\d+),(.*)$/);
+    if (m) return { area: { lat: +m[1], lng: +m[2], km: +m[3], name: decodeURIComponent(m[4]) || "พื้นที่ที่แชร์" }, shared: true };
+    try { const a = JSON.parse(store.get(ROUTE_KEY) || "null"); if (a) return { area: a, shared: false }; } catch { /* ignore */ }
+    return null;
+  }
+
   // ---------- tabs ----------
   function showTab(name) {
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
     document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     if (name === "map") { initMap(); setTimeout(() => map && map.invalidateSize(), 50); }
+    if (name === "route") {
+      if (!routeArea) { const init = initialArea(); if (init) openArea(init.area); }
+      else if (routeMap) setTimeout(() => routeMap.invalidateSize(), 50);
+    }
     if (name === "sos") { initSosMap(); setTimeout(() => sosMap && sosMap.invalidateSize(), 50); updateSos(); }
     window.scrollTo(0, 0);
   }

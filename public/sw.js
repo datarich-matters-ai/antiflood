@@ -1,6 +1,6 @@
 // Offline support: app shell is cache-first, water data is network-first so
 // people still see the last known levels when the signal drops.
-const CACHE = "antiflood-v6";
+const CACHE = "antiflood-v7";
 const SHELL = [
   "./", "index.html", "style.css", "app.js", "config.js", "manifest.webmanifest",
   "icon.svg", "icon-192.png", "vendor/leaflet.css", "vendor/leaflet.js",
