@@ -35,14 +35,27 @@
 
     <!-- แผนที่ -->
     <section id="tab-map" class="tab">
-      <div id="map"></div>
+      <div class="map-bar">
+        <div id="map-counts" class="small"></div>
+        <div class="chips" role="group" aria-label="ตัวกรองแผนที่">
+          <button class="chip active" data-filter="all">ทุกสถานี</button>
+          <button class="chip" data-filter="high">เฉพาะน้ำมาก/ล้นตลิ่ง</button>
+          <button class="chip" data-filter="rising">น้ำกำลังขึ้น</button>
+          <button class="chip active" data-toggle="dams">เขื่อน</button>
+        </div>
+      </div>
+      <div id="map-wrap">
+        <div id="map"></div>
+        <button id="map-locate" class="map-fab" aria-label="ไปที่ตำแหน่งของฉัน">📍</button>
+        <div id="map-notice" class="map-notice" hidden></div>
+      </div>
       <div class="legend small">
-        <span><i class="dot s5"></i>ล้นตลิ่ง</span>
-        <span><i class="dot s4"></i>น้ำมาก</span>
+        <span><i class="dot s5"></i>ล้นตลิ่ง (&gt;100%)</span>
+        <span><i class="dot s4"></i>น้ำมาก (70–100%)</span>
         <span><i class="dot s3"></i>ปกติ</span>
         <span><i class="dot s2"></i>น้ำน้อย</span>
-        <span><i class="dot s0"></i>ไม่มีข้อมูล</span>
         <span><i class="sq"></i>เขื่อน/อ่าง</span>
+        <span>▲ น้ำกำลังขึ้น</span>
       </div>
     </section>
 
@@ -50,24 +63,41 @@
     <section id="tab-sos" class="tab">
       <div class="card sos">
         <h2>🆘 ขอความช่วยเหลือ</h2>
-        <p class="small">กรอกข้อมูลแล้วกดส่ง แอปจะแนบพิกัด GPS ให้ ส่งต่อให้ญาติ กลุ่มอาสา หรือกู้ภัยได้ทันที</p>
+        <p class="small"><b>อันตรายถึงชีวิต โทรก่อนเลย</b> แล้วค่อยกรอกแบบฟอร์มนี้เพื่อส่งตำแหน่งให้ทีมช่วยเหลือ</p>
+        <div class="call-row">
+          <a class="btn danger big" href="tel:1669">📞 1669<br><small>เจ็บป่วยฉุกเฉิน</small></a>
+          <a class="btn danger big" href="tel:1784">📞 1784<br><small>ปภ. สาธารณภัย</small></a>
+        </div>
+
+        <h3>1. ตำแหน่งที่ต้องการความช่วยเหลือ</h3>
+        <button id="sos-getloc" class="btn primary wide">📍 ใช้ตำแหน่ง GPS ของฉัน</button>
+        <p class="small muted">หรือแตะบนแผนที่ / ลากหมุด ถ้าจะแจ้งแทนคนอื่น หรือ GPS คลาดเคลื่อน</p>
+        <div id="sos-map"></div>
+        <div id="sos-loc" class="loc-box">ยังไม่ได้ระบุตำแหน่ง</div>
+
+        <h3>2. สถานการณ์</h3>
+        <div class="urgency" role="radiogroup" aria-label="ความเร่งด่วน">
+          <label><input type="radio" name="sos-urg" value="🔴 อันตรายถึงชีวิต"> 🔴 อันตรายถึงชีวิต / ติดค้าง น้ำขึ้นเร็ว</label>
+          <label><input type="radio" name="sos-urg" value="🟠 ต้องการอพยพ"> 🟠 ต้องการอพยพ</label>
+          <label><input type="radio" name="sos-urg" value="🟡 ต้องการสิ่งของ"> 🟡 ต้องการอาหาร / น้ำ / ยา</label>
+        </div>
+        <label>ชื่อผู้ติดต่อ <input id="sos-name" autocomplete="name" placeholder="ชื่อ"></label>
+        <label>เบอร์โทรติดต่อกลับ <span class="req">*</span> <input id="sos-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="08x-xxx-xxxx"></label>
         <label>จำนวนคน <input id="sos-people" type="number" min="1" inputmode="numeric" placeholder="เช่น 4"></label>
-        <label>กลุ่มเปราะบาง
-          <input id="sos-vuln" placeholder="เช่น ผู้สูงอายุติดเตียง 1, เด็กเล็ก 2">
-        </label>
-        <label>ต้องการ
-          <input id="sos-need" placeholder="เช่น เรือ, อาหาร, ยา, น้ำดื่ม">
-        </label>
-        <label>เบอร์ติดต่อกลับ <input id="sos-phone" type="tel" inputmode="tel" placeholder="08x-xxx-xxxx"></label>
-        <label>รายละเอียดเพิ่ม / จุดสังเกต
+        <label>กลุ่มเปราะบาง <input id="sos-vuln" placeholder="เช่น ผู้สูงอายุติดเตียง 1, เด็กเล็ก 2"></label>
+        <label>ต้องการ <input id="sos-need" placeholder="เช่น เรือ, อาหาร, ยา, น้ำดื่ม"></label>
+        <label>รายละเอียด / จุดสังเกต
           <textarea id="sos-note" rows="2" placeholder="เช่น บ้านสีฟ้า หลังวัด น้ำสูงระดับอก"></textarea>
         </label>
-        <div id="sos-loc" class="small muted">ยังไม่ได้ระบุพิกัด</div>
-        <button id="sos-getloc" class="btn">📍 ระบุพิกัดของฉัน</button>
+
+        <h3>3. ส่ง</h3>
+        <button id="sos-submit" class="btn danger wide big">🆘 ส่งคำขอถึงทีมช่วยเหลือ</button>
+        <div id="sos-status" class="status" hidden></div>
+        <p class="small muted">หรือส่งต่อให้ญาติ / กลุ่มอาสาในพื้นที่</p>
         <div class="btn-row">
-          <button id="sos-share" class="btn danger">ส่ง / แชร์</button>
           <a id="sos-line" class="btn line" target="_blank" rel="noopener">LINE</a>
           <a id="sos-sms" class="btn">SMS</a>
+          <button id="sos-share" class="btn">แชร์</button>
           <button id="sos-copy" class="btn">คัดลอก</button>
         </div>
         <pre id="sos-preview" class="preview"></pre>

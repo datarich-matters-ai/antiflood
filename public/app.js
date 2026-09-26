@@ -280,46 +280,94 @@
   });
 
   // ---------- map ----------
+  let mapFilter = "all";
+  let showDams = true;
+
   function initMap() {
     if (map || !window.L) return;
     map = L.map("map", { preferCanvas: true }).setView([13.5, 100.8], 6);
-    addBaseLayer();
+    addBaseLayer(map, () => { $("map-notice").hidden = false; $("map-notice").textContent = "โหลดภาพแผนที่พื้นหลังไม่ได้ (สัญญาณอ่อน?) จุดสถานียังแสดงตามปกติ"; });
     markerLayer = L.layerGroup().addTo(map);
     drawMarkers();
     if (myPos) showMe();
   }
 
-  // Called when the map opens and again whenever data finishes loading, so the
-  // map is never left empty if it was opened before the data arrived.
+  const cssColor = (cls) => getComputedStyle(document.documentElement).getPropertyValue("--" + cls).trim() || "#9aa3af";
+  const gmapsLink = (lat, lng) => `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+
+  function stationPopup(s) {
+    const st = statusOf(s);
+    const diff = s.wl != null && s.bank != null ? s.bank - s.wl : null;
+    return `<div class="pop"><b>${esc(s.name)}</b><br><span class="muted">อ.${esc(s.amp)} จ.${esc(s.prov)}</span>` +
+      `<div class="pop-status ${st.cls}">${st.label}${s.pct != null ? ` · ${s.pct.toFixed(0)}% ของตลิ่ง` : ""}</div>` +
+      (diff != null ? (diff >= 0 ? `ต่ำกว่าตลิ่ง ${diff.toFixed(2)} ม.<br>` : `<b>สูงกว่าตลิ่ง ${(-diff).toFixed(2)} ม.</b><br>`) : "") +
+      (s.tr != null ? `${trendHtml(s)}<br>` : "") +
+      `<span class="muted">วัดเมื่อ ${fmtTime(s.t)}</span><br>` +
+      `<a href="${gmapsLink(s.lat, s.lng)}" target="_blank" rel="noopener">เปิดใน Google Maps</a></div>`;
+  }
+
+  // Called when the map opens, when data finishes loading and when a filter
+  // changes, so the map is never left empty or stale.
   function drawMarkers() {
     if (!map) return;
     markerLayer.clearLayers();
-    const color = (cls) => getComputedStyle(document.documentElement).getPropertyValue("--" + cls).trim() || "#9aa3af";
+    let shown = stations;
+    if (mapFilter === "high") shown = stations.filter((s) => statusOf(s).rank >= 4);
+    if (mapFilter === "rising") shown = stations.filter(isRising);
+
     // Draw calmer stations first so critical ones sit on top.
-    [...stations].sort((a, b) => statusOf(a).rank - statusOf(b).rank).forEach((s) => {
+    [...shown].sort((a, b) => statusOf(a).rank - statusOf(b).rank).forEach((s) => {
       const st = statusOf(s);
-      L.circleMarker([s.lat, s.lng], {
-        radius: st.rank >= 4 ? 8 : 5, weight: 1, color: "#fff", fillColor: color(st.cls), fillOpacity: 0.9,
-      }).bindPopup(
-        `<b>${esc(s.name)}</b><br>อ.${esc(s.amp)} จ.${esc(s.prov)}<br>` +
-        `<b>${st.label}</b>${s.pct != null ? ` (${s.pct.toFixed(0)}% ของตลิ่ง)` : ""}<br>` +
-        `ระดับน้ำ ${s.wl ?? "-"} ม.รทก. · ตลิ่ง ${s.bank ?? "-"} ม.รทก.<br>` +
-        (s.tr != null ? `${trendHtml(s)}<br>` : "") +
-        `<span style="color:#666">วัดเมื่อ ${fmtTime(s.t)}</span>`
-      ).addTo(markerLayer);
+      const critical = st.rank >= 4 || isRising(s);
+      if (critical) {
+        // Labelled pin: severity colour, % of bank and a rising arrow.
+        const label = `${s.pct != null ? s.pct.toFixed(0) + "%" : "?"}${isRising(s) ? " ▲" : ""}`;
+        L.marker([s.lat, s.lng], {
+          icon: L.divIcon({ className: "wl-pin", html: `<span class="${st.cls}">${label}</span>`, iconSize: null }),
+          zIndexOffset: st.rank * 100,
+        }).bindPopup(stationPopup(s)).addTo(markerLayer);
+      } else {
+        L.circleMarker([s.lat, s.lng], {
+          radius: 6, weight: 1.5, color: "#fff", fillColor: cssColor(st.cls), fillOpacity: 0.95,
+        }).bindPopup(stationPopup(s)).addTo(markerLayer);
+      }
     });
-    dams.forEach((d) => {
-      const st = damStatusOf(d);
-      L.marker([d.lat, d.lng], {
-        icon: L.divIcon({ className: "dam-icon", html: `<i style="background:${color(st.cls)}"></i>`, iconSize: [16, 16] }),
-      }).bindPopup(
-        `<b>🏞️ ${esc(d.name)}</b><br>จ.${esc(d.prov)}<br>` +
-        `<b>${st.label}</b>${d.pct != null ? ` (${d.pct.toFixed(0)}% ของความจุ)` : ""}<br>` +
-        (d.released != null ? `ระบายออก ${d.released} ล้าน ลบ.ม./วัน<br>` : "") +
-        `<span style="color:#666">ข้อมูลวันที่ ${esc(d.t || "-")}</span>`
-      ).addTo(markerLayer);
-    });
+
+    if (showDams) {
+      dams.forEach((d) => {
+        const st = damStatusOf(d);
+        L.marker([d.lat, d.lng], {
+          icon: L.divIcon({ className: "dam-icon", html: `<i style="background:${cssColor(st.cls)}"></i>`, iconSize: [16, 16] }),
+        }).bindPopup(
+          `<div class="pop"><b>🏞️ ${esc(d.name)}</b><br><span class="muted">จ.${esc(d.prov)}</span>` +
+          `<div class="pop-status ${st.cls}">${st.label}${d.pct != null ? ` · ${d.pct.toFixed(0)}% ของความจุ` : ""}</div>` +
+          (d.released != null ? `ระบายออก ${d.released} ล้าน ลบ.ม./วัน<br>` : "") +
+          `<span class="muted">ข้อมูลวันที่ ${esc(d.t || "-")}</span></div>`
+        ).addTo(markerLayer);
+      });
+    }
+
+    const n5 = stations.filter((s) => statusOf(s).cls === "s5").length;
+    const n4 = stations.filter((s) => statusOf(s).cls === "s4").length;
+    const nUp = stations.filter(isRising).length;
+    $("map-counts").innerHTML =
+      `<b class="c5">ล้นตลิ่ง ${n5}</b> · <b class="c4">น้ำมาก ${n4}</b>` + (nUp ? ` · <b class="c5">▲ ขึ้น ${nUp}</b>` : "") +
+      ` <span class="muted">จาก ${stations.length} สถานี</span>`;
   }
+
+  document.querySelectorAll(".chips [data-filter]").forEach((b) => b.addEventListener("click", () => {
+    mapFilter = b.dataset.filter;
+    document.querySelectorAll(".chips [data-filter]").forEach((x) => x.classList.toggle("active", x === b));
+    drawMarkers();
+  }));
+  document.querySelector(".chips [data-toggle=dams]").addEventListener("click", (e) => {
+    showDams = !showDams;
+    e.currentTarget.classList.toggle("active", showDams);
+    drawMarkers();
+  });
+  $("map-locate").addEventListener("click", async () => {
+    try { await locate(); render(); showMe(); } catch (err) { alert(err.message); }
+  });
 
   // Basemap providers, tried in order: if one fails before any tile loads, the
   // next one takes over.
@@ -332,25 +380,26 @@
       { attribution: "Tiles &copy; Esri" }],
   ];
 
-  function addBaseLayer(i = 0) {
-    if (i >= BASEMAPS.length) return;
+  function addBaseLayer(m, onAllFailed, i = 0) {
+    if (i >= BASEMAPS.length) { if (onAllFailed) onAllFailed(); return; }
     const [url, opts] = BASEMAPS[i];
-    const layer = L.tileLayer(url, { maxZoom: 19, ...opts, attribution: opts.attribution + " · ข้อมูลน้ำ ThaiWater" }).addTo(map);
+    const layer = L.tileLayer(url, { maxZoom: 19, ...opts, attribution: opts.attribution + " · ข้อมูลน้ำ ThaiWater" }).addTo(m);
     let loaded = false, errors = 0, done = false;
     layer.on("tileload", () => { loaded = true; });
     layer.on("tileerror", () => {
       if (loaded || done || ++errors < 3) return;
       done = true;
-      map.removeLayer(layer);
-      addBaseLayer(i + 1);
+      m.removeLayer(layer);
+      addBaseLayer(m, onAllFailed, i + 1);
     });
   }
 
   function showMe() {
-    if (!myPos) return;
+    if (!myPos || !map) return;
     if (meMarker) meMarker.remove();
-    meMarker = L.marker([myPos.lat, myPos.lng]).addTo(map).bindPopup("ตำแหน่งของคุณ");
-    map.setView([myPos.lat, myPos.lng], 11);
+    meMarker = L.circleMarker([myPos.lat, myPos.lng], { radius: 9, weight: 3, color: "#fff", fillColor: "#1a73e8", fillOpacity: 1 })
+      .addTo(map).bindPopup("ตำแหน่งของคุณ");
+    map.setView([myPos.lat, myPos.lng], 12);
   }
 
   // ---------- tabs ----------
@@ -358,33 +407,90 @@
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === "tab-" + name));
     document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     if (name === "map") { initMap(); setTimeout(() => map && map.invalidateSize(), 50); }
-    if (name === "sos") updateSos();
+    if (name === "sos") { initSosMap(); setTimeout(() => sosMap && sosMap.invalidateSize(), 50); updateSos(); }
     window.scrollTo(0, 0);
   }
   document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
   // ---------- SOS ----------
-  const SOS_FIELDS = ["sos-people", "sos-vuln", "sos-need", "sos-phone", "sos-note"];
+  // The request location is separate from myPos: people often report for a
+  // relative elsewhere, or correct a drifting GPS fix by moving the pin.
+  const SOS_FIELDS = ["sos-name", "sos-phone", "sos-people", "sos-vuln", "sos-need", "sos-note"];
+  const QUEUE_KEY = "sos-queue";
+  let sosPos = null; // {lat, lng, acc?, src: "gps" | "pin"}
+  let sosAddr = "";
+  let sosMap, sosMarker, geoTimer;
+  let sosForm = null; // {action, entries} from data/sosform.json
+
+  const v = (id) => $(id).value.trim();
+  const urgency = () => document.querySelector("input[name=sos-urg]:checked")?.value || "";
+  const sosLink = () => (sosPos ? `https://maps.google.com/?q=${sosPos.lat.toFixed(6)},${sosPos.lng.toFixed(6)}` : "");
+
+  function initSosMap() {
+    if (sosMap || !window.L) return;
+    const start = sosPos || myPos;
+    sosMap = L.map("sos-map").setView(start ? [start.lat, start.lng] : [13.5, 100.8], start ? 16 : 5);
+    addBaseLayer(sosMap);
+    sosMap.on("click", (e) => setSosPos({ lat: e.latlng.lat, lng: e.latlng.lng, src: "pin" }));
+    if (sosPos) placeSosMarker();
+    else if (myPos) setSosPos({ ...myPos, src: "gps" });
+  }
+
+  function placeSosMarker() {
+    if (!sosMap || !sosPos) return;
+    if (!sosMarker) {
+      sosMarker = L.marker([sosPos.lat, sosPos.lng], { draggable: true, autoPan: true }).addTo(sosMap);
+      sosMarker.on("dragend", () => {
+        const ll = sosMarker.getLatLng();
+        setSosPos({ lat: ll.lat, lng: ll.lng, src: "pin" }, false);
+      });
+    } else {
+      sosMarker.setLatLng([sosPos.lat, sosPos.lng]);
+    }
+  }
+
+  function setSosPos(pos, pan = true) {
+    sosPos = pos;
+    sosAddr = "";
+    placeSosMarker();
+    if (pan && sosMap) sosMap.setView([pos.lat, pos.lng], Math.max(sosMap.getZoom(), 16));
+    updateSos();
+    // Rough street address, to read out on the phone and for rescuers. Best
+    // effort: the coordinates are what matter.
+    clearTimeout(geoTimer);
+    geoTimer = setTimeout(async () => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&accept-language=th&lat=${pos.lat}&lon=${pos.lng}`;
+        const res = await fetch(url);
+        if (!res.ok || sosPos !== pos) return;
+        sosAddr = (await res.json()).display_name || "";
+        updateSos();
+      } catch { /* offline: coordinates only */ }
+    }, 800);
+  }
 
   function sosText() {
-    const v = (id) => $(id).value.trim();
     const lines = ["🆘 ขอความช่วยเหลือ น้ำท่วม"];
-    if (myPos) {
-      lines.push(`📍 พิกัด: https://maps.google.com/?q=${myPos.lat.toFixed(6)},${myPos.lng.toFixed(6)}`);
-    }
+    if (urgency()) lines.push(urgency());
+    if (sosPos) lines.push(`📍 ตำแหน่ง: ${sosLink()}`);
+    if (sosAddr) lines.push(`🏠 ที่อยู่โดยประมาณ: ${sosAddr}`);
+    if (v("sos-name") || v("sos-phone")) lines.push(`📞 ติดต่อ: ${[v("sos-name"), v("sos-phone")].filter(Boolean).join(" ")}`);
     if (v("sos-people")) lines.push(`👥 จำนวนคน: ${v("sos-people")}`);
     if (v("sos-vuln")) lines.push(`♿ กลุ่มเปราะบาง: ${v("sos-vuln")}`);
     if (v("sos-need")) lines.push(`📦 ต้องการ: ${v("sos-need")}`);
-    if (v("sos-phone")) lines.push(`📞 ติดต่อ: ${v("sos-phone")}`);
     if (v("sos-note")) lines.push(`📝 ${v("sos-note")}`);
-    lines.push(`🕒 ${new Date().toLocaleString("th-TH")}`);
+    lines.push(`🕒 ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`);
     return lines.join("\n");
   }
 
   function updateSos() {
-    $("sos-loc").textContent = myPos
-      ? `📍 พิกัด ${myPos.lat.toFixed(5)}, ${myPos.lng.toFixed(5)}${myPos.acc ? ` (คลาดเคลื่อน ±${Math.round(myPos.acc)} ม.)` : ""}`
-      : "ยังไม่ได้ระบุพิกัด (กดปุ่มด้านล่าง)";
+    $("sos-loc").innerHTML = sosPos
+      ? `<b>📍 ${sosPos.lat.toFixed(5)}, ${sosPos.lng.toFixed(5)}</b>` +
+        (sosPos.src === "gps" && sosPos.acc ? ` <span class="muted">(GPS ±${Math.round(sosPos.acc)} ม.)</span>` : sosPos.src === "pin" ? ` <span class="muted">(ปักหมุดเอง)</span>` : "") +
+        (sosAddr ? `<br>${esc(sosAddr)}` : "") +
+        `<br><a href="${sosLink()}" target="_blank" rel="noopener">ตรวจดูใน Google Maps</a>`
+      : "ยังไม่ได้ระบุตำแหน่ง";
+    $("sos-loc").classList.toggle("ok", !!sosPos);
     const text = sosText();
     $("sos-preview").textContent = text;
     $("sos-line").href = "https://line.me/R/share?text=" + encodeURIComponent(text);
@@ -398,21 +504,106 @@
     if (saved) $(id).value = saved;
     $(id).addEventListener("input", updateSos);
   });
+  document.querySelectorAll("input[name=sos-urg]").forEach((r) => r.addEventListener("change", updateSos));
 
-  $("sos-getloc").addEventListener("click", async () => {
-    $("sos-loc").textContent = "กำลังหาตำแหน่ง…";
-    try { await locate(); render(); } catch (err) { alert(err.message); }
-    updateSos();
+  $("sos-getloc").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true; btn.textContent = "กำลังหาตำแหน่ง…";
+    try {
+      const p = await locate();
+      render();
+      initSosMap();
+      setSosPos({ ...p, src: "gps" });
+    } catch (err) { alert(err.message); }
+    btn.disabled = false; btn.textContent = "📍 ใช้ตำแหน่ง GPS ของฉัน";
   });
 
-  $("sos-share").addEventListener("click", async () => {
-    if (!myPos) {
-      try { await locate(); render(); } catch { /* send without location rather than block */ }
-      updateSos();
+  // --- sending to the help-request form, with an offline queue ---
+  const loadQueue = () => { try { return JSON.parse(store.get(QUEUE_KEY) || "[]"); } catch { return []; } };
+  const saveQueue = (q) => store.set(QUEUE_KEY, JSON.stringify(q));
+
+  function showStatus(html, cls) {
+    const el = $("sos-status");
+    el.hidden = false;
+    el.className = "status " + cls;
+    el.innerHTML = html;
+  }
+
+  // One flush at a time: the "online" event and a button press can overlap, and
+  // two concurrent flushes would post the same queued request twice.
+  let flushing = null;
+  function flushQueue() {
+    if (!flushing) flushing = doFlush().finally(() => { flushing = null; });
+    return flushing;
+  }
+
+  async function doFlush() {
+    if (!sosForm) return;
+    const queue = loadQueue();
+    if (!queue.length) return;
+    const left = [];
+    for (const item of queue) {
+      try {
+        // Google Forms does not send CORS headers, so the response is opaque;
+        // a network error is the only failure we can see.
+        await fetch(sosForm.action, { method: "POST", mode: "no-cors", body: new URLSearchParams(item.body) });
+        showStatus(`✅ <b>ส่งคำขอแล้ว</b> รหัสอ้างอิง <b>${esc(item.ref)}</b> (${esc(item.time)})<br>` +
+          `ทีมช่วยเหลือจะติดต่อกลับทางเบอร์ที่ให้ไว้ ถ้าอันตรายถึงชีวิตให้โทร 1669 / 1784 ด้วย`, "ok");
+      } catch {
+        left.push(item);
+      }
     }
+    saveQueue(left);
+    if (left.length) {
+      showStatus(`⏳ ยังส่งไม่ได้ (ไม่มีสัญญาณ) แอปจะส่งให้อัตโนมัติเมื่อกลับมาออนไลน์ ` +
+        `อย่าปิดหน้านี้ หรือส่งทาง SMS ด้านล่างแทน`, "wait");
+    }
+  }
+
+  $("sos-submit").addEventListener("click", async () => {
+    if (!sosForm) {
+      showStatus("ยังไม่ได้เชื่อมต่อศูนย์รับเรื่องในพื้นที่ กรุณาโทร 1784 หรือส่งผ่าน LINE / SMS ด้านล่าง", "wait");
+      return;
+    }
+    if (!sosPos) {
+      showStatus("กรุณาระบุตำแหน่งก่อน (กดปุ่ม GPS หรือแตะบนแผนที่)", "err");
+      $("sos-getloc").scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    if (!v("sos-phone")) {
+      showStatus("กรุณาใส่เบอร์โทรติดต่อกลับ เพื่อให้ทีมช่วยเหลือโทรหาได้", "err");
+      $("sos-phone").focus();
+      return;
+    }
+    const ref = Math.random().toString(36).slice(2, 6).toUpperCase();
+    const time = new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" });
+    const e = sosForm.entries;
+    const body = {};
+    const put = (key, val) => { if (e[key] && val) body[e[key]] = val; };
+    put("urgency", urgency() || "ไม่ระบุ");
+    put("name", v("sos-name"));
+    put("phone", v("sos-phone"));
+    put("people", [v("sos-people") && `${v("sos-people")} คน`, v("sos-vuln")].filter(Boolean).join(" · "));
+    put("details", [v("sos-need") && `ต้องการ: ${v("sos-need")}`, v("sos-note")].filter(Boolean).join(" · "));
+    put("location", `${sosLink()} (${sosPos.lat.toFixed(6)}, ${sosPos.lng.toFixed(6)}` +
+      `${sosPos.src === "gps" && sosPos.acc ? `, GPS ±${Math.round(sosPos.acc)} ม.` : sosPos.src === "pin" ? ", ปักหมุดเอง" : ""})`);
+    put("address", `${sosAddr || "-"} [รหัส ${ref}]`);
+    // Any field the form lacks still reaches rescuers via the location answer.
+    if (!e.address) body[e.location] += ` [รหัส ${ref}]`;
+
+    const btn = $("sos-submit");
+    btn.disabled = true;
+    setTimeout(() => { btn.disabled = false; }, 30000); // avoid accidental double sends
+    saveQueue([...loadQueue(), { ref, time, body }]);
+    showStatus("กำลังส่ง…", "wait");
+    await flushQueue();
+  });
+  window.addEventListener("online", flushQueue);
+
+  $("sos-share").addEventListener("click", async () => {
     const text = sosText();
     if (navigator.share) {
-      try { await navigator.share({ text }); return; } catch (e) { if (e.name === "AbortError") return; }
+      try { await navigator.share({ text }); return; } catch (err) { if (err.name === "AbortError") return; }
     }
     window.open("https://line.me/R/share?text=" + encodeURIComponent(text), "_blank");
   });
@@ -423,6 +614,18 @@
     catch { prompt("คัดลอกข้อความนี้", text); }
   });
 
+  async function loadSosForm() {
+    try {
+      const res = await fetch("data/sosform.json", { cache: "no-cache" });
+      if (res.ok) sosForm = await res.json();
+    } catch { /* not configured or offline */ }
+    if (!sosForm) {
+      $("sos-submit").textContent = "ยังไม่ได้เชื่อมต่อศูนย์รับเรื่อง (ใช้ LINE / SMS ด้านล่าง)";
+      $("sos-submit").classList.remove("danger");
+    }
+    if (loadQueue().length) flushQueue();
+  }
+
   // ---------- static content ----------
   $("hotlines").innerHTML = hotlineHtml(CFG.hotlines || []);
   $("links").innerHTML = (CFG.links || []).map((l) => `<li><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.name)}</a></li>`).join("");
@@ -432,5 +635,6 @@
   }
 
   load();
+  loadSosForm();
   updateSos();
 })();

@@ -35,6 +35,10 @@ jobs:
         env:
           PAGES_URL: ${{ steps.pages.outputs.base_url }}
         run: node scripts/fetch-data.mjs public/data
+      - name: Read help-request form
+        env:
+          PAGES_URL: ${{ steps.pages.outputs.base_url }}
+        run: node scripts/sos-form.mjs public/data
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public

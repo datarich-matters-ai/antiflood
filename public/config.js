@@ -3,6 +3,13 @@
 window.APP_CONFIG = {
   appName: "น้ำท่วม: เช็คระดับน้ำ & ขอความช่วยเหลือ",
 
+  // Google Form that receives help requests (the form's "Send" link, e.g.
+  // https://forms.gle/xxxx). Its responses Sheet is where rescue teams see
+  // requests; share that Sheet only with them. Question titles must mention:
+  // ความเร่งด่วน, ชื่อ, เบอร์โทร, จำนวนคน, ต้องการ/รายละเอียด, ตำแหน่ง, ที่อยู่
+  // (scripts/sos-form.mjs matches them by keyword on every deploy).
+  sosFormUrl: "",
+
   // Tap-to-call numbers shown on the ฉุกเฉิน tab.
   hotlines: [
     { name: "ปภ. (สาธารณภัย)", tel: "1784" },
