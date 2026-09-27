@@ -1,0 +1,24 @@
+# Temporary: checks flood-road data sources (to be removed).
+name: probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Longdo events
+        run: |
+          curl -sS -m 40 -D h.txt https://event.longdo.com/feed/json -o ev.json -w "[%{http_code} %{size_download}B]\n"; grep -i 'access-control' h.txt || echo "no CORS header"
+          python3 - <<'PY'
+          import json,collections
+          d=json.load(open('ev.json'))
+          items=d if isinstance(d,list) else (d.get('data') or d.get('events') or d.get('items') or [])
+          print('type',type(d).__name__,'keys',list(d)[:10] if isinstance(d,dict) else '', 'n',len(items))
+          print('types',collections.Counter((str(e.get('type')),e.get('icon')) for e in items).most_common(15))
+          fl=[e for e in items if str(e.get('type'))=='6' or e.get('icon')=='flood']
+          print('flood n',len(fl))
+          for e in (fl or items)[:3]: print(json.dumps(e,ensure_ascii=False)[:900])
+          PY
+      - name: BMA sensors
+        run: curl -sS -m 30 -w "\n[%{http_code}]\n" "https://floodbangkok.bangkok.go.th/bkk/dds/services/api/floods/v1/items/sensor_profile?limit=2&fields=id,code,name,road,district,lat,long" | head -c 800 || true
+      - name: Traffy teamchadchart limit=500
+        run: curl -sS -m 90 -w "\n[%{http_code} %{time_total}s %{size_download}B]\n" "https://publicapi.traffy.in.th/share/teamchadchart/search?limit=500" -o tr.json || true; head -c 1500 tr.json; echo
