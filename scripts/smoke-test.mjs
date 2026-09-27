@@ -31,6 +31,9 @@ for (const [label, engine, device] of targets) {
   await page.goto(url, { waitUntil: "load" });
   await page.waitForTimeout(3000);
   console.log("header:", await page.textContent("#updated"));
+  await page.click("[data-tab=route]");
+  await page.waitForTimeout(8000);
+  console.log("districts:", (await page.textContent("#districts")).replace(/\s+/g, " ").trim().slice(0, 400));
   await page.click("[data-tab=map]");
   await page.waitForTimeout(6000);
   console.log("map box:", JSON.stringify(await page.locator("#map").boundingBox()));

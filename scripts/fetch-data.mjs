@@ -180,6 +180,42 @@ async function rainGauges() {
   return out;
 }
 
+// ---------- road flood reports ----------
+// Longdo Traffic's public event feed (reports from iTIC, JS100 and the public)
+// carries road flooding across the country. Keep flood, road-closed, diversion
+// and heavy-rain events from the last 12 hours; the app parses depth and
+// passability from the text (see roadStatus in app.js).
+const ROAD_TYPES = new Set(["6", "19", "18", "5"]); // flood, roadclosed, diversion, rain
+
+async function roadReports() {
+  const raw = await getJson("https://event.longdo.com/feed/json");
+  if (!Array.isArray(raw)) throw new Error("unexpected Longdo feed: not a list");
+  const since = Date.now() - 12 * 36e5;
+  const out = [];
+  for (const e of raw) {
+    if (!ROAD_TYPES.has(String(e.type)) && e.icon !== "flood") continue;
+    const text = `${e.title || ""} ${e.description || ""}`;
+    // Diversions and rain only matter here when they are about water.
+    if ((String(e.type) === "18" || String(e.type) === "5") && !/น้ำ|ท่วม|flood/i.test(text)) continue;
+    const lat = num(e.latitude), lng = num(e.longitude);
+    const start = toMs(e.start);
+    if (lat == null || lng == null || (start != null && start < since)) continue;
+    out.push({
+      id: `ld${e.eid}`,
+      src: "longdo",
+      type: e.icon || String(e.type),
+      title: e.title || "",
+      desc: (e.description || "").replace(/\s+/g, " ").trim(),
+      lat: round(lat, 6), lng: round(lng, 6),
+      start: e.start || null,
+      stop: e.stop || null,
+      by: e.contributor || "",
+      img: Array.isArray(e.images) ? e.images.slice(0, 3) : [],
+    });
+  }
+  return out;
+}
+
 // ---------- weather overlays ----------
 // Rain radar frames (RainViewer), the latest Himawari infrared cloud image
 // (NASA GIBS) and tropical cyclones near Thailand (GDACS). Each part is
@@ -268,6 +304,16 @@ try {
   console.error(`::warning::dams: ${err.message}`);
   const prev = await getPrev("dams.json");
   if (prev) await write("dams.json", prev);
+}
+
+try {
+  const reports = await roadReports();
+  await write("roads.json", { updated, source: "Longdo Traffic", reports });
+  console.log(`wrote ${reports.length} road flood reports`);
+} catch (err) {
+  console.error(`::warning::roads: ${err.message}`);
+  const prev = await getPrev("roads.json");
+  if (prev) await write("roads.json", prev);
 }
 
 try {

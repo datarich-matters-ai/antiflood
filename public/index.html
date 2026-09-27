@@ -47,6 +47,7 @@
           <button class="chip active" data-filter="all">ทุกสถานี</button>
           <button class="chip" data-filter="high">เฉพาะน้ำมาก/ล้นตลิ่ง</button>
           <button class="chip" data-filter="rising">น้ำกำลังขึ้น</button>
+          <button class="chip active" data-toggle="roads">🚗 ถนนท่วม</button>
           <button class="chip" data-toggle="dams">เขื่อน</button>
           <button class="chip" data-toggle="sat">🛰️ ดาวเทียม</button>
         </div>
@@ -71,6 +72,7 @@
         <span><i class="dot s2"></i>น้ำน้อย</span>
         <span><i class="sq"></i>เขื่อน/อ่าง</span>
         <span>▲ น้ำกำลังขึ้น</span>
+        <span>⛔ ผ่านไม่ได้ · 🚙 รถเล็กไม่ควรผ่าน · ⚠️ ขับช้า</span>
       </div>
     </section>
 
@@ -84,6 +86,7 @@
       <button id="route-near" class="btn wide">📍 ใกล้ฉัน (รัศมี 3 กม.)</button>
       <ul id="route-results" class="pick-list"></ul>
       <div id="route-area"></div>
+      <div id="districts"></div>
     </section>
 
     <!-- ขอความช่วยเหลือ -->

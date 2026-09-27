@@ -42,6 +42,8 @@
   let dams = [];
   let wx = {}; // data/weather.json: radar frames, cloud image, storms
   let gauges = []; // data/rain.json: rain stations
+  let roads = [];  // road flood reports (Longdo live / cache, plus BMA sensors and Traffy when reachable)
+  const roadSrc = {}; // source -> {ok, n, at}
   let myPos = null; // {lat, lng}
   let map, markerLayer, meMarker;
 
@@ -117,6 +119,7 @@
     dams = (await damsReq)?.dams || [];
     wx = await wxReq;
     gauges = (await rainReq)?.gauges || [];
+    fetch("data/roads.json", { cache: "no-cache" }).then((r) => (r.ok ? r.json() : null)).catch(() => null).then(loadRoads);
     fillProvinces();
     drawMarkers();
     if (/^#r=/.test(location.hash)) showTab("route");
@@ -294,6 +297,7 @@
   // ---------- map ----------
   let mapFilter = "all";
   let showDams = false;
+  let showRoads = true;
   let satellite = false;
   let baseLayer = null;
   const LABEL_ZOOM = 9; // % labels only once zoomed in; dots below that
@@ -356,6 +360,8 @@
       }
     });
 
+    if (showRoads) roads.filter((r) => roadStatus(r).level > 0).forEach((r) => roadMarker(r).addTo(markerLayer));
+
     if (showDams) {
       dams.filter((d) => d.pct != null).forEach((d) => {
         const st = damStatusOf(d);
@@ -375,7 +381,8 @@
     const nUp = stations.filter(isRising).length;
     $("map-counts").innerHTML =
       `<b class="c5">ล้นตลิ่ง ${n5}</b> · <b class="c4">น้ำมาก ${n4}</b>` + (nUp ? ` · <b class="c5">▲ ขึ้น ${nUp}</b>` : "") +
-      ` <span class="muted">จาก ${stations.length} สถานี</span>`;
+      ` <span class="muted">จาก ${stations.length} สถานี</span>` +
+      (roads.length ? ` · <b>🚗 ถนนท่วม ${roads.filter((r) => roadStatus(r).level > 0).length}</b>` : "");
   }
 
   document.querySelectorAll(".chips [data-filter]").forEach((b) => b.addEventListener("click", () => {
@@ -386,6 +393,11 @@
   document.querySelector(".chips [data-toggle=dams]").addEventListener("click", (e) => {
     showDams = !showDams;
     e.currentTarget.classList.toggle("active", showDams);
+    drawMarkers();
+  });
+  document.querySelector(".chips [data-toggle=roads]").addEventListener("click", (e) => {
+    showRoads = !showRoads;
+    e.currentTarget.classList.toggle("active", showRoads);
     drawMarkers();
   });
   document.querySelector(".chips [data-toggle=sat]").addEventListener("click", (e) => {
@@ -648,6 +660,215 @@
     if (myPos) map.setView([myPos.lat, myPos.lng], 8);
   });
 
+  // ---------- road flood reports ----------
+  // Longdo Traffic's public feed (iTIC, JS100, the public) is the main source
+  // and allows browser access. The BMA road sensors and Traffy Fondue only
+  // answer Thai networks, so the phone tries them directly and they simply
+  // stay out when unreachable. Depth and passability are read from each
+  // report's own text or sensor reading; nothing is made up.
+  const LONGDO_TYPES = new Set(["6", "19", "18", "5"]);
+  const FLOOD_TXT = /น้ำท่วม|ท่วมขัง|น้ำขัง|flood/i;
+
+  async function getJsonTimeout(url, ms = 12000) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), ms);
+    try {
+      const res = await fetch(url, { signal: ctl.signal, cache: "no-cache" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return await res.json();
+    } finally { clearTimeout(t); }
+  }
+
+  function fromLongdo(list) {
+    const since = Date.now() - 12 * 36e5;
+    return list.filter((e) => {
+      const txt = `${e.title || ""} ${e.description || ""}`;
+      if (!LONGDO_TYPES.has(String(e.type)) && e.icon !== "flood") return false;
+      if ((String(e.type) === "18" || String(e.type) === "5") && !/น้ำ|ท่วม|flood/i.test(txt)) return false;
+      const st = parseTime(e.start);
+      return !st || st.getTime() >= since;
+    }).map((e) => ({
+      id: `ld${e.eid}`, src: "longdo", type: e.icon || String(e.type), title: e.title || "",
+      desc: (e.description || "").replace(/\s+/g, " ").trim(), lat: Number(e.latitude), lng: Number(e.longitude),
+      start: e.start, by: e.contributor || "", img: Array.isArray(e.images) ? e.images.slice(0, 3) : [],
+    })).filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lng));
+  }
+
+  async function loadBma() {
+    const base = "https://floodbangkok.bangkok.go.th/bkk/dds/services/api/floods/v1/items/";
+    const [prof, notif] = await Promise.all([
+      getJsonTimeout(base + "sensor_profile?limit=-1&fields=id,code,name,road,district,lat,long"),
+      getJsonTimeout(base + "flood_notification?limit=600&sort=-date_created&fields=sensor_profile,value,date_created&filter[date_created][_gte]=" + encodeURIComponent("$NOW(-3 hours)")),
+    ]);
+    const latest = new Map();
+    for (const n of notif.data || []) if (!latest.has(n.sensor_profile)) latest.set(n.sensor_profile, n);
+    const out = [];
+    for (const p of prof.data || []) {
+      const n = latest.get(p.id);
+      const cm = n ? Number(n.value) : NaN;
+      if (!Number.isFinite(cm) || cm < 5) continue; // below 5 cm = normal
+      out.push({
+        id: `bma${p.id}`, src: "bma", type: "sensor", title: `เซ็นเซอร์ กทม. ${p.name || p.code || ""}`.trim(),
+        desc: [p.road && `ถ.${p.road}`, p.district && `เขต${p.district}`].filter(Boolean).join(" "),
+        lat: Number(p.lat), lng: Number(p.long), start: n.date_created, depth: cm, amp: p.district || "", prov: "กรุงเทพมหานคร", img: [],
+      });
+    }
+    return out.filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lng));
+  }
+
+  async function loadTraffy() {
+    const j = await getJsonTimeout("https://publicapi.traffy.in.th/share/teamchadchart/search?limit=500", 15000);
+    const rows = Array.isArray(j) ? j : j.results || j.data || [];
+    const since = Date.now() - 12 * 36e5;
+    return rows.filter((r) => {
+      const txt = `${[].concat(r.problem_type_abdul || r.type || []).join(" ")} ${r.description || ""}`;
+      const t = parseTime(r.timestamp);
+      return FLOOD_TXT.test(txt) && !/ประปา|ท่อแตก|น้ำไม่ไหล/.test(txt) && (!t || t.getTime() >= since) && !/เสร็จสิ้น|finish/i.test(r.state || "");
+    }).map((r) => ({
+      id: `tf${r.ticket_id}`, src: "traffy", type: "report", title: "รายงานจากประชาชน (Traffy Fondue)",
+      desc: `${r.description || ""} ${r.address ? `· ${r.address}` : ""}`.trim(),
+      lat: Number(r.coords?.[1]), lng: Number(r.coords?.[0]), start: r.timestamp, img: [r.photo_url || r.photo].filter(Boolean),
+    })).filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lng));
+  }
+
+  async function loadRoads(cached) {
+    let longdo = [];
+    try { longdo = fromLongdo(await getJsonTimeout("https://event.longdo.com/feed/json")); roadSrc.longdo = { ok: true, live: true }; }
+    catch { longdo = cached?.reports || []; roadSrc.longdo = { ok: !!longdo.length, live: false, at: cached?.updated }; }
+    roads = longdo;
+    roadsChanged();
+    // Thai-network-only sources, merged in when they answer.
+    for (const [key, fn] of [["bma", loadBma], ["traffy", loadTraffy]]) {
+      fn().then((list) => { roadSrc[key] = { ok: true, n: list.length }; roads = roads.filter((r) => r.src !== key).concat(list); roadsChanged(); })
+        .catch(() => { roadSrc[key] = { ok: false }; roadsChanged(); });
+    }
+  }
+
+  // Depth (cm) and passability from the report itself.
+  const BODY_CM = [[/ข้อเท้า/, 15], [/ครึ่งล้อ/, 25], [/หน้าแข้ง/, 30], [/เข่า/, 50], [/ต้นขา/, 70], [/เอว/, 90], [/หน้าอก|ระดับอก/, 120]];
+  function roadStatus(r) {
+    const t = `${r.title} ${r.desc}`;
+    let depth = r.depth ?? null, approx = false;
+    if (depth == null) {
+      const m = t.match(/(\d{1,3})\s*(?:ซม|เซน|cm)/i);
+      if (m) depth = Number(m[1]);
+      else { const b = BODY_CM.find(([re]) => re.test(t)); if (b) { depth = b[1]; approx = true; } }
+    }
+    let level, label;
+    if (/น้ำลด(ลง)?แล้ว|ระบาย(เสร็จ|ได้)แล้ว|แห้งแล้ว|สัญจรได้(ตาม)?ปกติ/.test(t)) [level, label] = [0, "น้ำลดแล้ว"];
+    else if (/รถเล็ก\S{0,6}(ไม่(ควร|แนะนำ)|ผ่านไม่ได้|หลีกเลี่ยง|งด)|เฉพาะรถ(ใหญ่|สูง)|รถ(กระบะ|สูง)\S{0,10}(ลุย|ผ่าน)(ได้|ไหว)/.test(t)) [level, label] = [2, "รถเล็กไม่ควรผ่าน"];
+    else if (r.type === "roadclosed" || /ผ่านไม่ได้|ไม่สามารถ(สัญจร|ผ่าน)|ปิด(การจราจร|ถนน|เส้นทาง)|งดใช้เส้นทาง/.test(t)) [level, label] = [3, "ผ่านไม่ได้"];
+    else if (/ผ่านได้|สัญจรได้|ขับ(ขี่)?(ช้า|ด้วยความระมัดระวัง)|ใช้ความระมัดระวัง/.test(t)) [level, label] = [1, "ผ่านได้ ขับช้า"];
+    else if (depth != null) [level, label] = depth >= 50 ? [3, "ผ่านไม่ได้"] : depth >= 25 ? [2, "รถเล็กไม่ควรผ่าน"] : [1, depth >= 10 ? "ผ่านได้ ขับช้า" : "น้ำขังเล็กน้อย"];
+    else [level, label] = [1, "น้ำท่วมขัง (ไม่ระบุความลึก)"];
+    const cls = ["s3", "s2", "s4", "s5"][level];
+    return { level, label, cls, depth, approx };
+  }
+
+  // Which amphoe/district a report belongs to: from its own text first, else
+  // the nearest rain gauge's amphoe (marked approximate).
+  function roadPlace(r) {
+    if (r._place) return r._place;
+    const t = r.desc || "";
+    let amp = r.amp || (t.match(/อ(?:ำเภอ|\.)\s*([^\s,()]+)/) || [])[1] || "";
+    let prov = r.prov || (t.match(/จ(?:ังหวัด|\.)\s*([^\s,()]+)/) || [])[1] || "";
+    const tam = (t.match(/(?:ต(?:ำบล|\.)|แขวง)\s*([^\s,()]+)/) || [])[1] || "";
+    const khet = (t.match(/เขต\s*([^\s,()]+)/) || [])[1];
+    if (!amp && khet) { amp = khet; prov = prov || "กรุงเทพมหานคร"; }
+    if (/กทม|กรุงเทพ/.test(t) && !prov) prov = "กรุงเทพมหานคร";
+    let approx = false;
+    if (!amp || !prov) {
+      let best = null, bd = 15;
+      for (const g of gauges) { const d = km(r, g); if (d < bd) { bd = d; best = g; } }
+      if (best) { amp = amp || best.amp; prov = prov || best.prov; approx = true; }
+    }
+    prov = prov.replace(/^จ\./, "");
+    r._place = { amp: amp || "ไม่ระบุ", prov: prov || "ไม่ระบุจังหวัด", tam, approx };
+    return r._place;
+  }
+
+  const SRC_LABEL = { longdo: "Longdo Traffic", bma: "เซ็นเซอร์ กทม.", traffy: "Traffy Fondue" };
+
+  function roadCard(r, withDist) {
+    const st = roadStatus(r);
+    const pl = roadPlace(r);
+    const credit = (r.desc.match(/Cr\.?\s*([^\s]+)/i) || [])[1];
+    return `<li class="${st.cls} road">
+      <div class="row"><span class="name">${esc(r.title)}</span><span class="badge ${st.cls}">${st.label}</span></div>
+      ${st.depth != null ? `<div class="small"><b>ระดับน้ำ ${st.approx ? "~" : ""}${Math.round(st.depth)} ซม.</b>${st.approx ? " (ประเมินจากคำบรรยาย)" : ""}</div>` : ""}
+      <div class="small">${esc(r.desc.replace(/Cr\.?\s*\S+/i, "").trim())}</div>
+      ${r.img?.length ? `<div class="photos">${r.img.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" loading="lazy" alt="รูปจากผู้รายงาน"></a>`).join("")}</div>` : ""}
+      <div class="small muted">${pl.tam ? `ต./แขวง${esc(pl.tam)} ` : ""}อ./เขต${esc(pl.amp)} จ.${esc(pl.prov)}${pl.approx ? " (โดยประมาณ)" : ""}
+        ${withDist && r.dist != null ? ` · ห่าง ${r.dist.toFixed(1)} กม.` : ""} · ${fmtTime(r.start)} · ${SRC_LABEL[r.src] || r.src}${credit ? ` (Cr. ${esc(credit)})` : ""}
+        · <a href="${trafficLink(r.lat, r.lng, 16)}" target="_blank" rel="noopener">🚦 จราจรตรงนี้</a></div>
+    </li>`;
+  }
+
+  function sourceStatus() {
+    const s = [];
+    s.push(roadSrc.longdo ? (roadSrc.longdo.live ? "Longdo สด ✓" : roadSrc.longdo.ok ? `Longdo (สำรอง ${fmtTime(roadSrc.longdo.at)})` : "Longdo ✗") : "Longdo …");
+    s.push(roadSrc.bma ? (roadSrc.bma.ok ? `เซ็นเซอร์ กทม. ✓ (${roadSrc.bma.n})` : "เซ็นเซอร์ กทม. ✗ (เปิดได้เฉพาะเครือข่ายในไทย)") : "เซ็นเซอร์ กทม. …");
+    s.push(roadSrc.traffy ? (roadSrc.traffy.ok ? `Traffy ✓ (${roadSrc.traffy.n})` : "Traffy ✗ (ระบบไม่ตอบสนอง)") : "Traffy …");
+    return s.join(" · ");
+  }
+
+  // ---------- district (amphoe) overview ----------
+  function renderDistricts() {
+    const el = $("districts");
+    if (!el) return;
+    const byProv = new Map();
+    for (const r of roads) {
+      const st = roadStatus(r);
+      if (st.level === 0) continue;
+      const { prov, amp } = roadPlace(r);
+      if (!byProv.has(prov)) byProv.set(prov, new Map());
+      const m = byProv.get(prov);
+      if (!m.has(amp)) m.set(amp, []);
+      m.get(amp).push(r);
+    }
+    const provs = [...byProv.entries()].map(([p, m]) => [p, [...m.values()].reduce((a, l) => a + l.length, 0)]).sort((a, b) => b[1] - a[1]);
+    const sel = store.get("dist-prov");
+    const cur = provs.some(([p]) => p === sel) ? sel : provs[0]?.[0];
+    el.innerHTML = `<div class="card">
+      <h2>📋 น้ำท่วมถนนรายอำเภอ ตอนนี้</h2>
+      <p class="small muted">${roads.length ? `${roads.length} รายงานใน 12 ชม. ล่าสุด · ` : ""}${sourceStatus()}</p>
+      ${provs.length ? `<select id="dist-prov" aria-label="เลือกจังหวัด">${provs.map(([p, n]) => `<option value="${esc(p)}"${p === cur ? " selected" : ""}>${esc(p)} (${n})</option>`).join("")}</select>
+      <table class="dist"><thead><tr><th>อำเภอ/เขต</th><th title="ผ่านไม่ได้">⛔</th><th title="รถเล็กไม่ควรผ่าน">🚙</th><th title="ผ่านได้/ขับช้า">⚠️</th><th>ลึกสุด</th></tr></thead><tbody>
+      ${[...(byProv.get(cur) || new Map()).entries()].map(([amp, list]) => {
+        const sts = list.map(roadStatus);
+        const c = (lv) => sts.filter((x) => x.level === lv).length;
+        const deep = Math.max(-1, ...sts.map((x) => x.depth ?? -1));
+        return [amp, list, c(3), c(2), c(1), deep];
+      }).sort((a, b) => b[2] - a[2] || b[3] - a[3] || b[1].length - a[1].length).map(([amp, list, n3, n2, n1, deep]) =>
+        `<tr data-amp="${esc(amp)}"><td><a href="#">${esc(amp)}</a></td><td class="${n3 ? "c5" : ""}">${n3 || "-"}</td><td class="${n2 ? "c4" : ""}">${n2 || "-"}</td><td>${n1 || "-"}</td><td>${deep >= 0 ? Math.round(deep) + " ซม." : "-"}</td></tr>
+         <tr class="dist-detail" hidden><td colspan="5"><ul class="list">${list.sort((a, b) => roadStatus(b).level - roadStatus(a).level).map((r) => roadCard(r, false)).join("")}</ul>
+           <button class="btn wide" data-area="${list[0].lat},${list[0].lng},${esc(amp)}">🗺️ ดูพื้นที่นี้บนแผนที่ + ความเสี่ยง</button></td></tr>`).join("")}
+      </tbody></table>` : `<p class="small">ยังไม่มีรายงานน้ำท่วมถนนใน 12 ชม. ล่าสุด</p>`}
+    </div>`;
+    $("dist-prov")?.addEventListener("change", (e) => { store.set("dist-prov", e.target.value); renderDistricts(); });
+    el.querySelectorAll("tr[data-amp] a").forEach((a) => a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const tr = a.closest("tr").nextElementSibling;
+      tr.hidden = !tr.hidden;
+    }));
+    el.querySelectorAll("[data-area]").forEach((b) => b.addEventListener("click", () => {
+      const [lat, lng, ...name] = b.dataset.area.split(",");
+      openArea({ lat: +lat, lng: +lng, km: 5, name: name.join(",") });
+      $("route-area").scrollIntoView({ behavior: "smooth" });
+    }));
+  }
+
+  let roadsTimer = null;
+  function roadsChanged() {
+    // Several sources land at different times; redraw once they settle.
+    clearTimeout(roadsTimer);
+    roadsTimer = setTimeout(() => {
+      renderDistricts();
+      if (routeArea) openArea(routeArea, true);
+      if (map) drawMarkers();
+    }, 200);
+  }
+
   // ---------- route: flood risk around a place ----------
   // Everything shown here comes from live data (ThaiWater stations, rain
   // gauges, Open-Meteo forecast). The risk score is a transparent sum of those
@@ -659,6 +880,10 @@
 
   function riskScore(area, near) {
     const parts = [];
+    const sts = near.roads.map(roadStatus);
+    const n3 = sts.filter((x) => x.level === 3).length, n2 = sts.filter((x) => x.level === 2).length, n1 = sts.filter((x) => x.level === 1).length;
+    const roadPts = Math.min(40, n3 * 20 + n2 * 12 + n1 * 5);
+    parts.push([roadPts, near.roads.length ? `รายงานน้ำท่วมถนนในพื้นที่: ผ่านไม่ได้ ${n3} · รถเล็กไม่ควรผ่าน ${n2} · ขับช้า/ขัง ${n1}` : "ไม่มีรายงานน้ำท่วมถนนในพื้นที่ (12 ชม.)"]);
     const maxR24 = Math.max(0, ...near.gauges.map((g) => g.r24 ?? 0));
     const maxR1 = Math.max(0, ...near.gauges.map((g) => g.r1 ?? 0));
     const rainPts = Math.min(35, (maxR24 / 90) * 35);
@@ -676,26 +901,28 @@
       wlTxt = `แม่น้ำ/คลองใกล้เคียง: ${statusOf(worst).label} ที่ ${esc(worst.name)}${up ? ` · น้ำกำลังขึ้น ${up} สถานี` : ""}`;
     }
     parts.push([wlPts, wlTxt]);
-    const score = Math.round(parts.reduce((a, [p]) => a + p, 0));
+    const score = Math.min(100, Math.round(parts.reduce((a, [p]) => a + p, 0)));
     const level = score >= 70 ? ["สูงมาก", "s5"] : score >= 45 ? ["สูง", "s4"] : score >= 20 ? ["ปานกลาง", "s2"] : ["ต่ำ", "s3"];
     return { score, level, parts };
   }
 
-  async function openArea(area) {
+  async function openArea(area, quiet = false) {
     routeArea = area;
     store.set(ROUTE_KEY, JSON.stringify(area));
     history.replaceState(null, "", `#r=${area.lat.toFixed(5)},${area.lng.toFixed(5)},${area.km},${encodeURIComponent(area.name)}`);
     $("route-results").innerHTML = "";
     const el = $("route-area");
-    el.innerHTML = `<div class="card small muted">กำลังรวบรวมข้อมูลพื้นที่ ${esc(area.name)}…</div>`;
+    if (!quiet) el.innerHTML = `<div class="card small muted">กำลังรวบรวมข้อมูลพื้นที่ ${esc(area.name)}…</div>`;
 
     const near = {
       gauges: gauges.map((g) => ({ ...g, dist: km(area, g) })).filter((g) => g.dist <= area.km + 5)
         .sort((a, b) => (b.r1 ?? -1) - (a.r1 ?? -1) || b.r24 - a.r24),
+      roads: roads.map((r) => Object.assign(r, { dist: km(area, r) })).filter((r) => r.dist <= area.km)
+        .sort((a, b) => roadStatus(b).level - roadStatus(a).level || a.dist - b.dist),
       stations: stations.map((s) => ({ ...s, dist: km(area, s) })).filter((s) => s.dist <= 10)
         .sort((a, b) => statusOf(b).rank - statusOf(a).rank || a.dist - b.dist),
     };
-    try { area.fc = await rainForecast(area.lat, area.lng); } catch { area.fc = null; }
+    if (!area.fc) { try { area.fc = await rainForecast(area.lat, area.lng); } catch { area.fc = null; } }
     if (routeArea !== area) return;
     const risk = riskScore(area, near);
     const heavy = near.gauges.filter((g) => (g.r1 ?? 0) >= 10 || g.r24 >= 35);
@@ -705,7 +932,7 @@
         <div class="row"><h2>📍 ${esc(area.name)}</h2><span class="muted small">รัศมี ${area.km} กม.</span></div>
         <div class="risk ${risk.level[1]}"><b>${risk.score}</b><span>คะแนนโอกาสน้ำท่วม<br><b>${risk.level[0]}</b></span></div>
         <ul class="small risk-parts">${risk.parts.map(([p, t]) => `<li><b>+${Math.round(p)}</b> ${t}</li>`).join("")}</ul>
-        <p class="small muted">คะแนนประเมินจากข้อมูลจริงข้างต้น (ฝนจริง ฝนพยากรณ์ ระดับน้ำ) ไม่ได้ยืนยันว่าถนนเส้นใดท่วม</p>
+        <p class="small muted">คะแนนรวมจากข้อมูลจริงข้างต้น (รายงานน้ำท่วมถนน ฝนจริง ฝนพยากรณ์ ระดับน้ำ) สูงสุด 100</p>
         ${area.fc ? `<div class="rain-now ${rainVerdict(area.fc)[1]}">${rainVerdict(area.fc)[0]}</div>` : ""}
         <div class="btn-row two">
           <a class="btn primary" href="${trafficLink(area.lat, area.lng, area.km > 4 ? 13 : 14)}" target="_blank" rel="noopener">🚦 ดูจราจร Google Maps</a>
@@ -713,6 +940,11 @@
         </div>
       </div>
       <div id="route-map"></div>
+      <div class="card">
+        <h2>🚗 ถนนน้ำท่วมตอนนี้ (${near.roads.length})</h2>
+        <p class="small muted">${sourceStatus()}</p>
+        <ul class="list">${near.roads.slice(0, 30).map((r) => roadCard(r, true)).join("") || `<li class="s3 small">ไม่มีรายงานน้ำท่วมถนนในรัศมี ${area.km} กม. ใน 12 ชม. ล่าสุด</li>`}</ul>
+      </div>
       <div class="card">
         <h2>🌧️ ฝนตกหนักตรงไหน</h2>
         ${heavy.length ? "" : `<p class="small">ไม่มีสถานีวัดฝนในพื้นที่ที่ฝนหนัก (≥10 มม./ชม. หรือ ≥35 มม./24 ชม.)</p>`}
@@ -733,14 +965,10 @@
             <div class="small muted">${fmtTime(s.t)} · <a href="${trafficLink(s.lat, s.lng)}" target="_blank" rel="noopener">🚦 จราจรตรงนี้</a></div>
           </li>`).join("") || `<li class="s0 small">ไม่มีสถานีวัดระดับน้ำในรัศมี 10 กม.</li>`}</ul>
       </div>
-      <div class="card">
-        <h2>🚧 ถนนปิด / รายงานจากประชาชน</h2>
-        <p class="small">แอปยังดึงข้อมูลส่วนนี้อัตโนมัติไม่ได้ (ระบบต้นทางไม่เปิดให้เชื่อมต่อจากภายนอกในขณะนี้) เช็กได้โดยตรงที่:</p>
-        <ul class="small">
-          <li>ทางหลวงน้ำท่วม/ผ่านไม่ได้: <a href="tel:1586">โทร 1586</a> (กรมทางหลวง) · <a href="tel:1146">1146</a> (ทางหลวงชนบท)</li>
-          <li>รายงานจากประชาชน พร้อมรูป: <a href="https://share.traffy.in.th/teamchadchart" target="_blank" rel="noopener">Traffy Fondue</a></li>
-          <li>สภาพจราจรสด: <a href="${trafficLink(area.lat, area.lng, 14)}" target="_blank" rel="noopener">Google Maps โหมดจราจร</a></li>
-        </ul>
+      <div class="card small">
+        <b>เช็กเพิ่มเติม:</b> ทางหลวง <a href="tel:1586">1586</a> · ทางหลวงชนบท <a href="tel:1146">1146</a> ·
+        <a href="https://share.traffy.in.th/teamchadchart" target="_blank" rel="noopener">Traffy Fondue</a> ·
+        <a href="${trafficLink(area.lat, area.lng, 14)}" target="_blank" rel="noopener">Google Maps จราจร</a>
       </div>`;
 
     $("route-share").addEventListener("click", async () => {
@@ -750,6 +978,15 @@
       try { await navigator.clipboard.writeText(url); alert("คัดลอกลิงก์แล้ว เปิดลิงก์นี้จะเห็นพื้นที่นี้ทันที"); } catch { prompt("คัดลอกลิงก์นี้", url); }
     });
     drawRouteMap(area, near);
+  }
+
+  function roadMarker(r) {
+    const st = roadStatus(r);
+    const icon = ["✅", "⚠️", "🚙", "⛔"][st.level];
+    return L.marker([r.lat, r.lng], {
+      icon: L.divIcon({ className: "road-pin", html: `<span class="${st.cls}">${icon}${st.depth != null ? ` ${Math.round(st.depth)}` : ""}</span>`, iconSize: null }),
+      zIndexOffset: 1000 + st.level * 100,
+    }).bindPopup(`<ul class="list pop-list">${roadCard(r, false)}</ul>`, { maxWidth: 300 });
   }
 
   function drawRouteMap(area, near) {
@@ -772,6 +1009,7 @@
       L.circleMarker([s.lat, s.lng], { radius: 8, weight: 2, color: "#fff", fillColor: cssColor(statusOf(s).cls), fillOpacity: 0.95 })
         .bindPopup(stationPopup(s)).addTo(routeLayer);
     });
+    near.roads.forEach((r) => roadMarker(r).addTo(routeLayer));
   }
 
   async function searchPlace(q) {

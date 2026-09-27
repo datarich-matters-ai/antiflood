@@ -193,3 +193,16 @@ label { display: block; margin: 8px 0; font-size: .95rem; }
 .rain-pin .heavy { background: #6a1b9a; color: #fff; border-color: #fff; }
 .tabs button span { font-size: .7rem; }
 .btn-row.two .btn { white-space: normal; padding: 10px 8px; }
+
+/* road flood reports */
+.photos { display: flex; gap: 6px; margin: 6px 0; overflow-x: auto; }
+.photos img { height: 90px; width: auto; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); }
+.road-pin { background: none; border: 0; }
+.road-pin span { display: inline-block; transform: translate(-50%, -50%); white-space: nowrap; font-size: 12px; font-weight: 700; padding: 3px 6px; border-radius: 10px; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); color: #fff; background: var(--s0); }
+.road-pin .s5 { background: var(--s5); } .road-pin .s4 { background: var(--s4); } .road-pin .s2 { background: var(--s2); color: #222; } .road-pin .s3 { background: var(--s3); }
+.pop-list { min-width: 240px; max-height: 320px; overflow-y: auto; margin: 0; }
+.pop-list li { margin: 0; }
+table.dist { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .92rem; }
+table.dist th, table.dist td { padding: 7px 4px; border-bottom: 1px solid var(--border); text-align: center; }
+table.dist th:first-child, table.dist td:first-child { text-align: left; }
+table.dist .dist-detail td { text-align: left; padding: 6px 0; }

@@ -1,6 +1,6 @@
 // Offline support: app shell is cache-first, water data is network-first so
 // people still see the last known levels when the signal drops.
-const CACHE = "antiflood-v7";
+const CACHE = "antiflood-v8";
 const SHELL = [
   "./", "index.html", "style.css", "app.js", "config.js", "manifest.webmanifest",
   "icon.svg", "icon-192.png", "vendor/leaflet.css", "vendor/leaflet.js",
@@ -26,7 +26,8 @@ self.addEventListener("fetch", (e) => {
   if (url.hostname.endsWith("tile.openstreetmap.org") || url.hostname.endsWith("basemaps.cartocdn.com") || url.hostname.endsWith("arcgisonline.com")
     || url.hostname.endsWith("nominatim.openstreetmap.org") || url.hostname.endsWith("google.com")
     || url.hostname.endsWith("rainviewer.com") || url.hostname.endsWith("earthdata.nasa.gov")
-    || url.hostname.endsWith("open-meteo.com")) return; // don't hoard map tiles
+    || url.hostname.endsWith("open-meteo.com") || url.hostname.endsWith("longdo.com")
+    || url.hostname.endsWith("traffy.in.th") || url.hostname.endsWith("bangkok.go.th")) return; // don't hoard map tiles
 
   const networkFirst = url.pathname.includes("/data/") || req.mode === "navigate"
     || /\.(js|css)$/.test(url.pathname) && !url.pathname.includes("/vendor/");
