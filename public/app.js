@@ -738,7 +738,10 @@
     roads = longdo;
     roadsChanged();
     // Thai-network-only sources, merged in when they answer.
-    for (const [key, fn] of [["bma", loadBma], ["traffy", loadTraffy]]) {
+    // BMA road sensors would slot in here too, but their API sends no CORS
+    // headers, so browsers block every site but the BMA's own (loadBma is kept
+    // for when that changes).
+    for (const [key, fn] of [["traffy", loadTraffy]]) {
       fn().then((list) => { roadSrc[key] = { ok: true, n: list.length }; roads = roads.filter((r) => r.src !== key).concat(list); roadsChanged(); })
         .catch(() => { roadSrc[key] = { ok: false }; roadsChanged(); });
     }
@@ -756,7 +759,7 @@
     }
     let level, label;
     if (/น้ำลด(ลง)?แล้ว|ระบาย(เสร็จ|ได้)แล้ว|แห้งแล้ว|สัญจรได้(ตาม)?ปกติ/.test(t)) [level, label] = [0, "น้ำลดแล้ว"];
-    else if (/รถเล็ก\S{0,6}(ไม่(ควร|แนะนำ)|ผ่านไม่ได้|หลีกเลี่ยง|งด)|เฉพาะรถ(ใหญ่|สูง)|รถ(กระบะ|สูง)\S{0,10}(ลุย|ผ่าน)(ได้|ไหว)/.test(t)) [level, label] = [2, "รถเล็กไม่ควรผ่าน"];
+    else if (/รถเล็ก\S{0,6}(ไม่(ควร|แนะนำ|สามารถ)|ผ่านไม่ได้|หลีกเลี่ยง|งด)|เฉพาะรถ(ใหญ่|สูง)|รถ(กระบะ|สูง)\S{0,10}(ลุย|ผ่าน)(ได้|ไหว)/.test(t)) [level, label] = [2, "รถเล็กไม่ควรผ่าน"];
     else if (r.type === "roadclosed" || /ผ่านไม่ได้|ไม่สามารถ(สัญจร|ผ่าน)|ปิด(การจราจร|ถนน|เส้นทาง)|งดใช้เส้นทาง/.test(t)) [level, label] = [3, "ผ่านไม่ได้"];
     else if (/ผ่านได้|สัญจรได้|ขับ(ขี่)?(ช้า|ด้วยความระมัดระวัง)|ใช้ความระมัดระวัง/.test(t)) [level, label] = [1, "ผ่านได้ ขับช้า"];
     else if (depth != null) [level, label] = depth >= 50 ? [3, "ผ่านไม่ได้"] : depth >= 25 ? [2, "รถเล็กไม่ควรผ่าน"] : [1, depth >= 10 ? "ผ่านได้ ขับช้า" : "น้ำขังเล็กน้อย"];
@@ -807,8 +810,8 @@
   function sourceStatus() {
     const s = [];
     s.push(roadSrc.longdo ? (roadSrc.longdo.live ? "Longdo สด ✓" : roadSrc.longdo.ok ? `Longdo (สำรอง ${fmtTime(roadSrc.longdo.at)})` : "Longdo ✗") : "Longdo …");
-    s.push(roadSrc.bma ? (roadSrc.bma.ok ? `เซ็นเซอร์ กทม. ✓ (${roadSrc.bma.n})` : "เซ็นเซอร์ กทม. ✗ (เปิดได้เฉพาะเครือข่ายในไทย)") : "เซ็นเซอร์ กทม. …");
-    s.push(roadSrc.traffy ? (roadSrc.traffy.ok ? `Traffy ✓ (${roadSrc.traffy.n})` : "Traffy ✗ (ระบบไม่ตอบสนอง)") : "Traffy …");
+    if (roadSrc.bma) s.push(roadSrc.bma.ok ? `เซ็นเซอร์ กทม. ✓ (${roadSrc.bma.n})` : "เซ็นเซอร์ กทม. ✗");
+    s.push(roadSrc.traffy ? (roadSrc.traffy.ok ? `Traffy ✓ (${roadSrc.traffy.n})` : "Traffy ✗ (ระบบไม่ตอบสนอง)") : "Traffy กำลังโหลด…");
     return s.join(" · ");
   }
 
