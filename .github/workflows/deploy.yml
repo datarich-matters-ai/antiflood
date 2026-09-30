@@ -22,6 +22,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -60,6 +61,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           sleep 180
+          # A run can get stuck "waiting" on the github-pages environment and
+          # would then block the chain forever; cancel anything pending for
+          # more than 20 minutes before deciding.
+          cutoff=$(date -u -d '-20 min' +%Y-%m-%dT%H:%M:%SZ)
+          gh run list --workflow deploy.yml --limit 30 --json databaseId,status,createdAt \
+            --jq ".[] | select(.databaseId != ${{ github.run_id }}) | select(.status != \"completed\") | select(.createdAt < \"$cutoff\") | .databaseId" |
+            while read -r id; do echo "cancelling stuck run $id"; gh run cancel "$id" || true; done
+          sleep 5
           others=$(gh run list --workflow deploy.yml --limit 20 --json databaseId,status \
             --jq "[.[] | select(.databaseId != ${{ github.run_id }}) | select(.status != \"completed\")] | length")
           if [ "$others" -eq 0 ]; then
