@@ -1,0 +1,43 @@
+# Keeps the data refresh alive. A deploy run sometimes gets stuck "waiting" on
+# the github-pages environment; it then holds the pages concurrency group and
+# the self-queuing chain in deploy.yml stops. This workflow is outside that
+# group, so it can always run: it cancels stuck deploy runs and restarts the
+# chain when nothing has deployed recently.
+name: watchdog
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: true
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel stuck runs and restart the refresh chain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          stuck=$(date -u -d '-20 min' +%Y-%m-%dT%H:%M:%SZ)
+          runs=$(gh run list --workflow deploy.yml --limit 40 --json databaseId,status,conclusion,createdAt,updatedAt)
+          echo "$runs" | jq -r --arg t "$stuck" '.[] | select(.status != "completed" and .createdAt < $t) | .databaseId' |
+            while read -r id; do echo "cancelling stuck run $id"; gh run cancel "$id" || true; done
+          sleep 20
+          runs=$(gh run list --workflow deploy.yml --limit 40 --json databaseId,status,conclusion,createdAt,updatedAt)
+          recent=$(date -u -d '-20 min' +%Y-%m-%dT%H:%M:%SZ)
+          ok=$(echo "$runs" | jq --arg t "$recent" '[.[] | select(.conclusion == "success" and .updatedAt > $t)] | length')
+          active=$(echo "$runs" | jq '[.[] | select(.status == "in_progress")] | length')
+          echo "recent successes: $ok, in progress: $active"
+          if [ "$ok" -eq 0 ] && [ "$active" -eq 0 ]; then
+            gh workflow run deploy.yml --ref "${{ github.event.repository.default_branch }}"
+            echo "restarted refresh chain"
+          fi
