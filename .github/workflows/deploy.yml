@@ -6,7 +6,7 @@ on:
   push:
     branches: [main, claude/keen-fermi-b7enci]
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -60,7 +60,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          sleep 180
+          # GitHub Pages publishes at most ~10 deployments an hour; beyond
+          # that a deploy still reports success but the site is not updated.
+          # Start the next run 10 minutes after this one started.
+          started=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }} --jq .run_started_at)
+          wait=$(( $(date -d "$started" +%s) + 600 - $(date +%s) ))
+          if [ "$wait" -gt 0 ]; then sleep "$wait"; fi
           # A run can get stuck "waiting" on the github-pages environment and
           # would then block the chain forever; cancel anything pending for
           # more than 20 minutes before deciding.

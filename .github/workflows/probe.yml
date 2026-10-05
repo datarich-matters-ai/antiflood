@@ -6,19 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          B=https://datarich-matters-ai.github.io/antiflood/data
-          for f in waterlevel history rain roads weather dams; do curl -sS "$B/$f.json" -o $f.json; done
-          python3 - <<'PY'
-          import json,collections
-          w=json.load(open('waterlevel.json')); s=w['stations']
-          print('updated',w['updated'],'n',len(s))
-          ts=collections.Counter((x['t'] or '')[:13] for x in s); print('station t by hour (top):',ts.most_common(8))
-          print('trend count',sum(1 for x in s if x.get('tr') is not None))
-          h=json.load(open('history.json')); lens=collections.Counter(len(v) for v in h.values()); print('history stations',len(h),'readings/station',sorted(lens.items())[:10])
-          import datetime as d
-          sample=list(h.items())[:2]; print('sample',[(k,[(d.datetime.utcfromtimestamp(a/1000).isoformat(),b) for a,b in v]) for k,v in sample])
-          r=json.load(open('rain.json')); print('rain updated',r['updated'],collections.Counter((g['t'] or '')[:13] for g in r['gauges']).most_common(3))
-          rd=json.load(open('roads.json')); print('roads',rd['updated'],len(rd['reports']),[x['start'] for x in rd['reports']][:5])
-          PY
-      - run: curl -sS https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_load | python3 -c "
-          import json,sys,collections; d=json.load(sys.stdin)['waterlevel_data']['data']; print('live thaiwater n',len(d), collections.Counter((x.get('waterlevel_datetime') or '')[:13] for x in d).most_common(6))"
+          for i in 1 2 3; do
+            curl -sS -H 'Cache-Control: no-cache' "https://datarich-matters-ai.github.io/antiflood/data/waterlevel.json?nocache=$RANDOM" -o w.json -D h.txt
+            echo "site updated: $(jq -r .updated w.json) | $(grep -iE '^(age|last-modified|x-cache):' h.txt | tr -d '\r' | tr '\n' ' ')"
+            sleep 5
+          done
